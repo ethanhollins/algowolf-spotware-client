@@ -15,14 +15,14 @@ MESSAGE_EVENT = 'message'
 
 class Client(object):
 
-	def __init__(self, is_demo=False, timeout=None):
+	def __init__(self, broker, is_demo=False, timeout=None):
 		self._events = {
 			CONNECT_EVENT: [],
 			DISCONNECT_EVENT: [],
 			MESSAGE_EVENT: []
 		}
-		self._msg_queue = []
 
+		self.broker = broker
 		self.is_demo = is_demo
 		self.host = "demo.ctraderapi.com" if is_demo else "live.ctraderapi.com"
 		self.port = 5035
@@ -30,6 +30,9 @@ class Client(object):
 		self.ssock = None
 
 		self._populate_protos()
+
+		Thread(target=self._perform_send).start()
+
 
 
 	def _populate_protos(self):
@@ -80,20 +83,43 @@ class Client(object):
 				time.sleep(1)
 
 
+	def _perform_send(self):
+
+		while True:
+			if len(self.broker._msg_queue) and self.broker._msg_queue[0][0] == self.is_demo:
+				_, payload, msgid = self.broker._msg_queue[0]
+				del self.broker._msg_queue[0]
+
+				if self.ssock is not None:
+					proto_msg = o1.ProtoMessage(
+						payloadType=payload.payloadType,
+						payload=payload.SerializeToString(),
+						clientMsgId=msgid
+					).SerializeToString()
+
+					sock_msg = pack("!I", len(proto_msg)) + proto_msg
+					# print(f'[SC] SEND MSG: {sock_msg}')
+					self.ssock.send(sock_msg)
+
+				else:
+					print('[SC] Not connected.')
+
+				self.broker.req_count += 1
+
+			if self.broker.req_count >= 50:
+				time.sleep(1)
+				self.broker.req_timer = time.time()
+				self.broker.req_count = 0
+
+			elif time.time() - self.broker.req_timer > 1:
+				self.broker.req_timer = time.time()
+				self.broker.req_count = 0
+
+			time.sleep(0.001)
+
+
 	def send(self, payload, msgid=''):
-		if self.ssock is not None:
-			proto_msg = o1.ProtoMessage(
-				payloadType=payload.payloadType,
-				payload=payload.SerializeToString(),
-				clientMsgId=msgid
-			).SerializeToString()
-
-			sock_msg = pack("!I", len(proto_msg)) + proto_msg
-			# print(f'[SC] SEND MSG: {sock_msg}')
-			self.ssock.send(sock_msg)
-
-		else:
-			print('[SC] Not connected.')
+		self.broker._msg_queue.append((self.is_demo, payload, msgid))
 
 
 	def receive(self):

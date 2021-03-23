@@ -79,6 +79,9 @@ class Spotware(object):
 			tl.MARKET_ENTRY: {},
 			tl.POSITION_CLOSE: {}
 		}
+		self._msg_queue = []
+		self.req_timer = time.time()
+		self.req_count = 0
 		# self.assets = assets
 		# self.symbols = symbols
 
@@ -100,8 +103,8 @@ class Spotware(object):
 			self.parent = self
 			self.children = []
 
-			self.demo_client = Client(True)
-			self.live_client = Client(False)
+			self.demo_client = Client(self, True)
+			self.live_client = Client(self, False)
 
 			self.demo_client.event('connect', self.connect)
 			self.demo_client.event('disconnect', self.disconnect)
@@ -149,9 +152,9 @@ class Spotware(object):
 	'''
 
 	def _periodic_refresh(self):
-		TEN_SECONDS = 10
+		TWO_SECONDS = 2
 		while self.is_running:
-			if time.time() - self._last_update > TEN_SECONDS:
+			if time.time() - self._last_update > TWO_SECONDS:
 				try:
 					heartbeat = o1.ProtoHeartbeatEvent()
 					self.demo_client.send(heartbeat)
