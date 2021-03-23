@@ -863,7 +863,7 @@ class Spotware(object):
 		'''
 
 		start_time = time.time()
-		print(f'CREATE ORDER START: {self.brokerId}', flush=True)
+		print(f'CREATE ORDER START: {self.brokerId}, {self.accounts}', flush=True)
 		broker_name = self.accounts[account_id]['broker']
 		new_order_req = o2.ProtoOANewOrderReq(
 			ctidTraderAccountId=int(account_id),
