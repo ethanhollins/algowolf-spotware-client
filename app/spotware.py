@@ -434,14 +434,18 @@ class Spotware(object):
 		dl_start = None
 		dl_end = None
 		if start:
-			dl_start = tl.utils.convertTimeToTimestamp(start)
+			# dl_start = tl.utils.convertTimeToTimestamp(start)
+			dl_start = start
 		if end:
-			dl_end = tl.utils.convertTimeToTimestamp(end)
+			# dl_end = tl.utils.convertTimeToTimestamp(end)
+			dl_end = end
 
 		if count:
 			if start:
+				start = tl.utils.convertTimestampToTime(start)
 				dl_end = tl.utils.convertTimeToTimestamp(tl.utils.getCountDate(period, count+1, start=start))
 			elif end:
+				end = tl.utils.convertTimestampToTime(end)
 				dl_start = tl.utils.convertTimeToTimestamp(tl.utils.getCountDate(period, count+1, end=end))
 			else:
 				dl_start = tl.utils.convertTimeToTimestamp(tl.utils.getCountDate(period, count+1))
