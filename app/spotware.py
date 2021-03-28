@@ -274,13 +274,13 @@ class Spotware(object):
 						for sub in child._account_subscriptions:
 							sub.onAccountUpdate(payloadType, account_id, MessageToDict(payload), msgid)
 
-						if isinstance(result, dict): 
-							for k, v in result.items():
-								if v['accepted']:
-									if v['type'] == tl.MARKET_ENTRY:
-										self._handled_position_events[tl.MARKET_ENTRY][v['item'].order_id] = {k: v}
-									elif v['type'] == tl.POSITION_CLOSE:
-										self._handled_position_events[tl.POSITION_CLOSE][v['item'].order_id] = {k: v}
+						# if isinstance(result, dict): 
+						# 	for k, v in result.items():
+						# 		if v['accepted']:
+						# 			if v['type'] == tl.MARKET_ENTRY:
+						# 				self._handled_position_events[tl.MARKET_ENTRY][v['item'].order_id] = {k: v}
+						# 			elif v['type'] == tl.POSITION_CLOSE:
+						# 				self._handled_position_events[tl.POSITION_CLOSE][v['item'].order_id] = {k: v}
 
 						break
 
@@ -556,37 +556,10 @@ class Spotware(object):
 	def createPosition(self,
 		product, lotsize, direction,
 		account_id, entry_range, entry_price,
-		sl_range, tp_range, sl_price, tp_price
+		sl_tp_prices, sl_tp_ranges
 	):
 		ref_id = self.generateReference()
 
-		sl_tp_prices = {}
-		sl_tp_ranges = {}
-		if sl_price:
-			sl_tp_prices['stopLoss'] = sl_price
-
-			# Get range from current price for temp sl
-			chart = self.getChart(product)
-			if direction == tl.LONG:
-				sl_tp_ranges['relativeStopLoss'] = int((chart.ask[tl.period.ONE_MINUTE][3] - sl_price) * 100000)
-			else:
-				sl_tp_ranges['relativeStopLoss'] = int((sl_price - chart.bid[tl.period.ONE_MINUTE][3]) * 100000)
-
-		if sl_range:
-			sl_tp_ranges['relativeStopLoss'] = int(sl_range)
-
-		if tp_price:
-			sl_tp_prices['takeProfit'] = tp_price
-			# Get range from current price for temp tp
-			chart = self.getChart(product)
-			if direction == tl.LONG:
-				sl_tp_ranges['relativeTakeProfit'] = int((tp_price - chart.ask[tl.period.ONE_MINUTE][3]) * 100000)
-			else:
-				sl_tp_ranges['relativeTakeProfit'] = int((chart.bid[tl.period.ONE_MINUTE][3] - tp_price) * 100000)
-
-		if tp_range:
-			sl_tp_ranges['relativeTakeProfit'] = int(tp_range)
-		
 		broker_name = self.accounts[account_id]['broker']
 		sw_product = self._convert_product(broker_name, product)
 		direction = 1 if direction == tl.LONG else 2
@@ -595,9 +568,9 @@ class Spotware(object):
 		'''
 		TEMP
 		'''
-		# sl_tp_ranges['relativeStopLoss'] = int(round(sl_tp_ranges['relativeStopLoss']/100) * 100)
-		# sl_tp_ranges['relativeTakeProfit'] = int(round(sl_tp_ranges['relativeTakeProfit']/100) * 100)
-		# lotsize = int(lotsize / 100000)
+		sl_tp_ranges['relativeStopLoss'] = int(round(sl_tp_ranges['relativeStopLoss']/100) * 100)
+		sl_tp_ranges['relativeTakeProfit'] = int(round(sl_tp_ranges['relativeTakeProfit']/100) * 100)
+		lotsize = int(lotsize / 100000)
 		'''
 		TEMP
 		'''
@@ -614,30 +587,34 @@ class Spotware(object):
 		self._get_client(account_id).send(new_order, msgid=ref_id)
 		res = self.parent._wait(ref_id)
 		print(f'Result:\n{res}', flush=True)
+		print(f'CREATE POSITION END: {self.brokerId} {round(time.time() - start_time, 2)}s', flush=True)
 
 		result = {}
 		if res.payloadType == 2126:
-		# 	new_pos = self.convert_sw_position(account_id, res.position)
-			pos_res = self.parent._wait_for_position(str(res.position.positionId))
-			print(f'Pos Res: {pos_res}', flush=True)
+			# new_pos = self.convert_sw_position(account_id, res.position)
+			result = {
+				'order_id': str(res.position.positionId)
+			}
+			# pos_res = self.parent._wait_for_position(str(res.position.positionId))
+			# print(f'Pos Res: {pos_res}', flush=True)
 
-			if pos_res is not None:
-				ref_id = list(pos_res.keys())[0]
-				item = pos_res[ref_id]
-				pos = item['item']
+			# if pos_res is not None:
+			# 	ref_id = list(pos_res.keys())[0]
+			# 	item = pos_res[ref_id]
+			# 	pos = item['item']
 
-				if len(sl_tp_prices) > 0:
-					mod_ref_id = self.generateReference()
+			# 	if len(sl_tp_prices) > 0:
+			# 		mod_ref_id = self.generateReference()
 
-					amend_req = o2.ProtoOAAmendPositionSLTPReq(
-						ctidTraderAccountId=int(pos.account_id),
-						positionId=int(pos.order_id), **sl_tp_prices
-					)
-					self._get_client(account_id).send(amend_req, msgid=mod_ref_id)
+			# 		amend_req = o2.ProtoOAAmendPositionSLTPReq(
+			# 			ctidTraderAccountId=int(pos.account_id),
+			# 			positionId=int(pos.order_id), **sl_tp_prices
+			# 		)
+			# 		self._get_client(account_id).send(amend_req, msgid=mod_ref_id)
 
-					res = self.parent._wait(mod_ref_id)
+			# 		res = self.parent._wait(mod_ref_id)
 
-				result.update(pos_res)
+			# 	result.update(pos_res)
 
 		elif not res is None and res.payloadType in (50, 2132):
 			result.update({
@@ -658,7 +635,6 @@ class Spotware(object):
 				}
 			})
 
-		print(f'CREATE POSITION END: {self.brokerId} {round(time.time() - start_time, 2)}s', flush=True)
 		return result
 
 
@@ -672,28 +648,24 @@ class Spotware(object):
 			positionId=int(order_id), stopLoss=sl_price, takeProfit=tp_price
 		)
 		self._get_client(account_id).send(amend_req, msgid=ref_id)
+
 		res = self.parent._wait(ref_id)
-
-		if not isinstance(res, dict):
-			if not res is None and res.payloadType in (50, 2132):
-				res = {
-					ref_id: {
-						'timestamp': time.time(),
-						'type': tl.MODIFY,
-						'accepted': False,
-						'message': res.errorCode
-					}
-				}
-			else:
-				res = {
-					ref_id: {
-						'timestamp': time.time(),
-						'type': tl.MODIFY,
-						'accepted': False
-					}
-				}
-
 		print(f'MODIFY POSITION END: {self.brokerId} {round(time.time() - start_time, 2)}s', flush=True)
+		
+		if res is not None and res.payloadType in (50, 2132):
+			res = {
+				ref_id: {
+					'timestamp': time.time(),
+					'type': order_type,
+					'accepted': False,
+					'message': res.errorCode
+				}
+			}
+		else:
+			res = {
+				'ref_id': ref_id
+			}
+
 		return res
 
 
@@ -702,24 +674,28 @@ class Spotware(object):
 
 		close_req = o2.ProtoOAClosePositionReq(
 			ctidTraderAccountId=int(account_id),
-			positionId=int(order_id), volume=lotsize
+			positionId=int(order_id), volume=int(lotsize)
 		)
 		self._get_client(account_id).send(close_req, msgid=ref_id)
 
-		res = self.parent._wait(ref_id)
-
 		start_time = time.time()
 		print(f'DELETE POSITION START: {self.brokerId}', flush=True)
+		res = self.parent._wait(ref_id)
+		print(f'DELETE POSITION END: {self.brokerId} {round(time.time() - start_time, 2)}s', flush=True)
+
 		# Handle delete result
 		result = {}
 		if res.payloadType == 2126:
-			pos_res = self.parent._wait_for_close(str(order_id))
-			if not pos_res is None:
-				ref_id = list(pos_res.keys())[0]
-				item = pos_res[ref_id]
-				print(f'Pos Res [delete]: {pos_res}', flush=True)
+			result = {
+				'order_id': str(order_id)
+			}
+			# pos_res = self.parent._wait_for_close(str(order_id))
+			# if not pos_res is None:
+			# 	ref_id = list(pos_res.keys())[0]
+			# 	item = pos_res[ref_id]
+			# 	print(f'Pos Res [delete]: {pos_res}', flush=True)
 
-				result.update(pos_res)
+			# 	result.update(pos_res)
 
 		elif not res is None and res.payloadType in (50, 2132):
 			result.update({
@@ -740,7 +716,6 @@ class Spotware(object):
 				}
 			})
 
-		print(f'DELETE POSITION END: {self.brokerId} {round(time.time() - start_time, 2)}s', flush=True)
 		return result
 
 
@@ -858,13 +833,12 @@ class Spotware(object):
 		direction = 1 if direction == tl.LONG else 2
 		sw_order_type = 3 if order_type == tl.STOP_ORDER else 2
 		# lotsize = round(lotsize / 1000000) * 1000000
-		lotsize = round(lotsize / 100000) * 100000
-
+		# lotsize = round(lotsize / 100000) * 100000
 
 		'''
 		TEMP
 		'''
-		# lotsize = int(lotsize / 100000)
+		lotsize = int(lotsize / 100000)
 		'''
 		TEMP
 		'''
@@ -882,24 +856,19 @@ class Spotware(object):
 		res = self.parent._wait(ref_id)
 		print(f'CREATE ORDER END: {self.brokerId} {round(time.time() - start_time, 2)}s', flush=True)
 
-		if not isinstance(res, dict):
-			if not res is None and res.payloadType in (50, 2132):
-				res = {
-					ref_id: {
-						'timestamp': time.time(),
-						'type': order_type,
-						'accepted': False,
-						'message': res.errorCode
-					}
+		if res is not None and res.payloadType in (50, 2132):
+			res = {
+				ref_id: {
+					'timestamp': time.time(),
+					'type': order_type,
+					'accepted': False,
+					'message': res.errorCode
 				}
-			else:
-				res = {
-					ref_id: {
-						'timestamp': time.time(),
-						'type': order_type,
-						'accepted': False
-					}
-				}
+			}
+		else:
+			res = {
+				'ref_id': ref_id
+			}
 
 		return res
 
@@ -917,7 +886,7 @@ class Spotware(object):
 			'''
 			TEMP
 			'''
-			# lotsize = int(lotsize / 100000)
+			lotsize = int(lotsize / 100000)
 			'''
 			TEMP
 			'''
@@ -935,30 +904,25 @@ class Spotware(object):
 			**args
 		)
 		self._get_client(account_id).send(amend_req, msgid=ref_id)
-
 		res = self.parent._wait(ref_id)
 		print(f'MODIFY ORDER END: {self.brokerId} {round(time.time() - start_time, 2)}s', flush=True)
 
-		if not isinstance(res, dict):
-			if not res is None and res.payloadType in (50, 2132):
-				res = {
-					ref_id: {
-						'timestamp': time.time(),
-						'type': tl.MODIFY,
-						'accepted': False,
-						'message': res.errorCode
-					}
+		if res is not None and res.payloadType in (50, 2132):
+			res = {
+				ref_id: {
+					'timestamp': time.time(),
+					'type': tl.MODIFY,
+					'accepted': False,
+					'message': res.errorCode
 				}
-			else:
-				res = {
-					ref_id: {
-						'timestamp': time.time(),
-						'type': tl.MODIFY,
-						'accepted': False
-					}
-				}
+			}
 
-		print(f'MOD: {res}', flush=True)
+		else:
+			res = {
+				'ref_id': ref_id
+			}
+
+		# print(f'MOD: {res}', flush=True)
 
 		return res
 
@@ -972,28 +936,26 @@ class Spotware(object):
 			ctidTraderAccountId=int(account_id), orderId=int(order_id)
 		)
 		self._get_client(account_id).send(cancel_req, msgid=ref_id)
-
-		res = self.parent._wait(ref_id)
 		print(f'DELETE ORDER END: {self.brokerId} {round(time.time() - start_time, 2)}s', flush=True)
 
-		if not isinstance(res, dict):
-			if not res is None and res.payloadType in (50, 2132):
-				res = {
-					ref_id: {
-						'timestamp': time.time(),
-						'type': tl.ORDER_CANCEL,
-						'accepted': False,
-						'message': res.errorCode
-					}
+		
+
+		res = self.parent._wait(ref_id)
+
+		if res is not None and res.payloadType in (50, 2132):
+			res = {
+				ref_id: {
+					'timestamp': time.time(),
+					'type': tl.ORDER_CANCEL,
+					'accepted': False,
+					'message': res.errorCode
 				}
-			else:
-				res = {
-					ref_id: {
-						'timestamp': time.time(),
-						'type': tl.ORDER_CANCEL,
-						'accepted': False
-					}
-				}
+			}
+
+		else:
+			res = {
+				'ref_id': ref_id
+			}
 
 		return res
 
