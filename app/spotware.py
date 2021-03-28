@@ -568,9 +568,9 @@ class Spotware(object):
 		'''
 		TEMP
 		'''
-		sl_tp_ranges['relativeStopLoss'] = int(round(sl_tp_ranges['relativeStopLoss']/100) * 100)
-		sl_tp_ranges['relativeTakeProfit'] = int(round(sl_tp_ranges['relativeTakeProfit']/100) * 100)
-		lotsize = int(lotsize / 100000)
+		# sl_tp_ranges['relativeStopLoss'] = int(round(sl_tp_ranges['relativeStopLoss']/100) * 100)
+		# sl_tp_ranges['relativeTakeProfit'] = int(round(sl_tp_ranges['relativeTakeProfit']/100) * 100)
+		# lotsize = int(lotsize / 100000)
 		'''
 		TEMP
 		'''
@@ -833,12 +833,12 @@ class Spotware(object):
 		direction = 1 if direction == tl.LONG else 2
 		sw_order_type = 3 if order_type == tl.STOP_ORDER else 2
 		# lotsize = round(lotsize / 1000000) * 1000000
-		# lotsize = round(lotsize / 100000) * 100000
+		lotsize = round(lotsize / 100000) * 100000
 
 		'''
 		TEMP
 		'''
-		lotsize = int(lotsize / 100000)
+		# lotsize = int(lotsize / 100000)
 		'''
 		TEMP
 		'''
@@ -886,7 +886,7 @@ class Spotware(object):
 			'''
 			TEMP
 			'''
-			lotsize = int(lotsize / 100000)
+			# lotsize = int(lotsize / 100000)
 			'''
 			TEMP
 			'''
