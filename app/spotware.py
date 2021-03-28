@@ -487,7 +487,7 @@ class Spotware(object):
 					break
 
 			else:
-				break
+				print(f'ERROR: {res}')
 
 		return result.to_dict()
 
