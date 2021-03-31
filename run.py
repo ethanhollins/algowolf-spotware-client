@@ -4,6 +4,8 @@ import os
 import json
 import traceback
 from app.spotware import Spotware
+from app.db import Database
+
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -12,8 +14,9 @@ Utilities
 '''
 class UserContainer(object):
 
-	def __init__(self, sio, config):
+	def __init__(self, sio, db, config):
 		self.sio = sio
+		self.db = db
 		self.config = config
 		self.parent = None
 		self.users = {}
@@ -35,10 +38,10 @@ class UserContainer(object):
 		return self.parent
 
 
-	def addUser(self, broker_id, access_token, refresh_token, accounts, is_parent, is_dummy):
+	def addUser(self, user_id, broker_id, access_token, refresh_token, accounts, is_parent, is_dummy):
 		if broker_id not in self.users:
 			self.users[broker_id] = Spotware(
-				self, broker_id, access_token=access_token, refresh_token=refresh_token, 
+				self, user_id, broker_id, access_token=access_token, refresh_token=refresh_token, 
 				accounts=accounts, is_parent=is_parent, is_dummy=is_dummy
 			)
 			if is_parent:
@@ -49,7 +52,6 @@ class UserContainer(object):
 
 	def deleteUser(self, broker_id):
 		if broker_id in self.users:
-			self.users[broker_id].stop()
 			del self.users[broker_id]
 
 
@@ -72,7 +74,8 @@ Initialize
 
 config = getConfig()
 sio = socketio.Client()
-user_container = UserContainer(sio, config)
+db = Database(config)
+user_container = UserContainer(sio, db, config)
 
 '''
 Socket IO functions
@@ -91,18 +94,24 @@ def sendResponse(msg_id, res):
 	)
 
 
-def onAddUser(broker_id, access_token, refresh_token, accounts, is_parent=False, is_dummy=False):
+def onAddUser(user_id, broker_id, access_token, refresh_token, accounts, is_parent=False, is_dummy=False):
 	user = user_container.addUser(
-		broker_id, access_token, refresh_token, accounts, is_parent=is_parent, is_dummy=is_dummy
+		user_id, broker_id, access_token, refresh_token, accounts, is_parent=is_parent, is_dummy=is_dummy
 	)
 
-	if is_dummy:
-		getParent().deleteChild(user)
+	# if is_dummy:
+	# 	getParent().deleteChild(user)
 
-	return {
-		'access_token': user.access_token,
-		'refresh_token': user.refresh_token
-	}
+	if user.is_auth:
+		return {
+			'access_token': user.access_token,
+			'refresh_token': user.refresh_token
+		}
+
+	else:
+		return {
+			'error': 'Not Authorised'
+		}
 
 
 def onDeleteUser(broker_id):
@@ -119,6 +128,21 @@ def getUser(broker_id):
 
 def getParent():
 	return user_container.getParent()
+
+
+def getUserTokens(broker_id):
+	user = getUser(broker_id)
+
+	if user and user.is_auth:
+		return {
+			'access_token': user.access_token,
+			'refresh_token': user.refresh_token
+		}
+
+	else:
+		return {
+			'error': 'Not Authorised'
+		}
 
 
 # Download Historical Data EPT
@@ -191,6 +215,9 @@ def onCommand(data):
 			if cmd == 'add_user':
 				res = onAddUser(*data.get('args'), **data.get('kwargs'))
 
+			elif cmd == 'get_tokens':
+				res = getUserTokens(*data.get('args'), **data.get('kwargs'))
+
 			elif cmd == 'delete_user':
 				res = onDeleteUser(*data.get('args'), **data.get('kwargs'))
 
@@ -233,6 +260,11 @@ def onCommand(data):
 			elif cmd == 'deleteOrder':
 				res = user.deleteOrder(*data.get('args'), **data.get('kwargs'))
 
+			elif cmd == 'deleteChild':
+				res = getParent().deleteChild(*data.get('args'), **data.get('kwargs'))
+
+			elif cmd == 'checkAccessToken':
+				res = getParent().checkAccessToken(*data.get('args'), **data.get('kwargs'))
 
 			sendResponse(data.get('msg_id'), res)
 

@@ -61,12 +61,14 @@ class AccountSubscription(object):
 class Spotware(object):
 
 	def __init__(self,
-		container, broker_id, access_token=None, refresh_token=None, 
+		container, user_id, broker_id, access_token=None, refresh_token=None, 
 		accounts={}, is_parent=False, is_dummy=False
 	):
 		self.container = container
+		self.userId = user_id
 		self.brokerId = broker_id
 		self.accounts = accounts
+		self.is_dummy = is_dummy
 
 		self._spotware_connected = False
 		self._last_update = time.time()
@@ -120,18 +122,16 @@ class Spotware(object):
 			while not self._spotware_connected:
 				pass
 
-			self._authorize_accounts(self.accounts, is_parent=True)
+			self.is_auth = self._authorize_accounts(self.accounts, is_parent=True)
 
 			# Start refresh thread
 			Thread(target=self._periodic_refresh).start()
 
 		else:
-			
-
 			self.parent = self.container.getParent()
 			self.parent.addChild(self)
 			# self.client = self.parent.client
-			self._authorize_accounts(accounts, is_dummy=is_dummy)
+			self.is_auth = self._authorize_accounts(accounts, is_dummy=is_dummy)
 
 
 	def _set_time_off(self):
@@ -320,29 +320,36 @@ class Spotware(object):
 		if res.payloadType == 2174:
 			self.access_token = res.accessToken
 			self.refresh_token = res.refreshToken
-			# if is_parent:
-			# 	self.ctrl.getDb().updateUser(
-			# 		self.name,
-			# 		{
-			# 			'access_token': self.access_token,
-			# 			'refresh_token': self.refresh_token
-			# 		}
-			# 	)
+			if is_parent:
+				self.container.db.updateUser(
+					'spotware',
+					{
+						'access_token': self.access_token,
+						'refresh_token': self.refresh_token
+					}
+				)
 
-			# else:
-			# 	self.ctrl.getDb().updateBroker(
-			# 		self.userAccount.userId, self.brokerId, 
-			# 		{ 
-			# 			'access_token': self.access_token,
-			# 			'refresh_token': self.refresh_token
-			# 		}
-			# 	)
+			else:
+				self.container.db.updateBroker(
+					self.userId, self.brokerId, 
+					{ 
+						'access_token': self.access_token,
+						'refresh_token': self.refresh_token
+					}
+				)
+
+			return True
+		else:
+			return False
 
 
 	def _authorize_accounts(self, accounts, is_parent=False, is_dummy=False):
 		print(f'MSG: {self.brokerId}, {accounts}', flush=True)
+
 		if not is_dummy and self.refresh_token is not None:
-			self._refresh_token(is_parent=is_parent)
+			is_auth = self._refresh_token(is_parent=is_parent)
+			if not is_auth:
+				return False
 
 		for account_id in accounts:
 			ref_id = self.generateReference()
@@ -353,17 +360,21 @@ class Spotware(object):
 			self._get_client(account_id).send(acc_auth, msgid=ref_id)
 			res = self.parent._wait(ref_id)
 			
-			trader_ref_id = self.generateReference()
-			trader_req = o2.ProtoOATraderReq(
-				ctidTraderAccountId=int(account_id)
-			)
-			self._get_client(account_id).send(trader_req, msgid=trader_ref_id)
-			trader_res = self.parent._wait(trader_ref_id)
+			if res.payloadType != 2142:
+				trader_ref_id = self.generateReference()
+				trader_req = o2.ProtoOATraderReq(
+					ctidTraderAccountId=int(account_id)
+				)
+				self._get_client(account_id).send(trader_req, msgid=trader_ref_id)
+				trader_res = self.parent._wait(trader_ref_id)
 
-			self._set_broker_info(account_id, trader_res.trader.brokerName)
+				self._set_broker_info(account_id, trader_res.trader.brokerName)
 
-			# if res.payloadType == 2142:
-			# 	return self._authorize_accounts(accounts)
+				# if res.payloadType == 2142:
+				# 	return self._authorize_accounts(accounts)
+				return True
+			else:
+				return False
 
 
 	def _set_broker_info(self, account_id, broker_name):
@@ -738,6 +749,8 @@ class Spotware(object):
 
 
 	def getAllAccounts(self):
+		print(f'ALL ACOUNTS: {self.access_token}')
+
 		ref_id = self.generateReference()
 		accounts_req = o2.ProtoOAGetAccountListByAccessTokenReq(
 			accessToken=self.access_token
@@ -745,14 +758,13 @@ class Spotware(object):
 		self.parent.demo_client.send(accounts_req, msgid=ref_id)
 
 		res = self.parent._wait(ref_id)
-		if res is not None:
+		if res is not None and res.payloadType != 2142:
 			self.accounts = { str(i.ctidTraderAccountId): { 'is_demo': not i.isLive } for i in res.ctidTraderAccount }
 			self._authorize_accounts([i.ctidTraderAccountId for i in res.ctidTraderAccount])
 
 			result = []
 			for i in res.ctidTraderAccount:
 				if res.permissionScope == 1:
-
 					trader_ref_id = self.generateReference()
 					trader_req = o2.ProtoOATraderReq(
 						ctidTraderAccountId=int(i.ctidTraderAccountId)
@@ -768,11 +780,29 @@ class Spotware(object):
 						'account_id': i.traderLogin,
 						'broker': trader_res.trader.brokerName
 					})
+				else:
+					return None
 
 			return result
 
 		else:
 			return None
+
+
+	def checkAccessToken(self, access_token):
+		ref_id = self.generateReference()
+		accounts_req = o2.ProtoOAGetAccountListByAccessTokenReq(
+			accessToken=access_token
+		)
+		self.parent.demo_client.send(accounts_req, msgid=ref_id)
+
+		res = self.parent._wait(ref_id)
+		if res is not None:
+			return MessageToDict(res)
+		else:
+			return {
+				'error': 'failed'
+			}
 
 
 	def getAccountInfo(self, account_id):
@@ -1589,6 +1619,11 @@ class Spotware(object):
 		self.children.append(child)
 
 
-	def deleteChild(self, child):
-		if child in self.children:
-			del self.children[self.children.index(child)]
+	def deleteChild(self, broker_id):
+		for i in range(len(self.children)):
+			child = self.children[i]
+			if child.brokerId == broker_id and child.is_dummy:
+				print(f'DELETE CHILD {broker_id}', flush=True)
+				del self.children[i]
+				self.container.deleteUser(broker_id)
+				break

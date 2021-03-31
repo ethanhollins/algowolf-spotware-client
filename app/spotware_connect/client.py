@@ -61,7 +61,7 @@ class Client(object):
 		self.ssock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLS, certfile=PEM_PATH, keyfile=PEM_PATH)
 		self.ssock.connect((self.host, self.port))
 
-		print('[SC] Connected')
+		print('[SC] Connected', flush=True)
 
 		t = Thread(target=self.receive)
 		t.start()
@@ -70,12 +70,12 @@ class Client(object):
 			for e in self._events[CONNECT_EVENT]:
 				e(self.is_demo)
 		except Exception:
-			print(traceback.format_exc())
+			print(traceback.format_exc(), flush=True)
 
 
 	def reconnect(self):
 		while True:
-			print('[SC] Attempting reconnect.')
+			print('[SC] Attempting reconnect.', flush=True)
 			try:
 				self.connect()
 				break
@@ -86,34 +86,38 @@ class Client(object):
 	def _perform_send(self):
 
 		while True:
-			if len(self.broker._msg_queue) and self.broker._msg_queue[0][0] == self.is_demo:
-				_, payload, msgid = self.broker._msg_queue[0]
-				del self.broker._msg_queue[0]
+			try:
+				if len(self.broker._msg_queue) and self.broker._msg_queue[0][0] == self.is_demo:
+					_, payload, msgid = self.broker._msg_queue[0]
+					del self.broker._msg_queue[0]
 
-				if self.ssock is not None:
-					proto_msg = o1.ProtoMessage(
-						payloadType=payload.payloadType,
-						payload=payload.SerializeToString(),
-						clientMsgId=msgid
-					).SerializeToString()
+					if self.ssock is not None:
+						proto_msg = o1.ProtoMessage(
+							payloadType=payload.payloadType,
+							payload=payload.SerializeToString(),
+							clientMsgId=msgid
+						).SerializeToString()
 
-					sock_msg = pack("!I", len(proto_msg)) + proto_msg
-					# print(f'[SC] SEND MSG: {sock_msg}')
-					self.ssock.send(sock_msg)
+						sock_msg = pack("!I", len(proto_msg)) + proto_msg
+						# print(f'[SC] SEND MSG: {sock_msg}')
+						self.ssock.send(sock_msg)
 
-				else:
-					print('[SC] Not connected.')
+					else:
+						print('[SC] Not connected.')
 
-				self.broker.req_count += 1
+					self.broker.req_count += 1
 
-			if self.broker.req_count >= 50:
-				time.sleep(1)
-				self.broker.req_timer = time.time()
-				self.broker.req_count = 0
+				if self.broker.req_count >= 50:
+					time.sleep(1)
+					self.broker.req_timer = time.time()
+					self.broker.req_count = 0
 
-			elif time.time() - self.broker.req_timer > 1:
-				self.broker.req_timer = time.time()
-				self.broker.req_count = 0
+				elif time.time() - self.broker.req_timer > 1:
+					self.broker.req_timer = time.time()
+					self.broker.req_count = 0
+
+			except Exception:
+				print(f'[SC] SEND ERROR:\n{traceback.format_exc()}', flush=True)
 
 			time.sleep(0.001)
 
@@ -134,7 +138,7 @@ class Client(object):
 					break
 				buffer += recv
 			except Exception:
-				print(f'[SC] ERROR:\n{traceback.format_exc()}')
+				print(f'[SC] ERROR:\n{traceback.format_exc()}', flush=True)
 				break
 
 			while len(buffer):
@@ -168,17 +172,17 @@ class Client(object):
 							for e in self._events[MESSAGE_EVENT]:
 								e(self.is_demo, proto_msg.payloadType, payload, proto_msg.clientMsgId)
 						except Exception:
-							print(traceback.format_exc())
+							print(traceback.format_exc(), flush=True)
 
 
 						msg = b''
 
-		print('[SC] Disconnected...')
+		print('[SC] Disconnected...', flush=True)
 		try:
 			for e in self._events[DISCONNECT_EVENT]:
 				e(self.is_demo)
 		except Exception:
-			print(traceback.format_exc())
+			print(traceback.format_exc(), flush=True)
 
 		self.reconnect()
 

@@ -1,8 +1,10 @@
+boto3==1.16.31
 numpy==1.19.4
 ntplib==0.3.4
 pandas==1.1.5
 pendulum==2.1.2
 protobuf==3.14.0
+PyJWT==1.7.1
 python-dateutil==2.7.3
 python-engineio==3.14.2
 python-socketio==4.6.1
