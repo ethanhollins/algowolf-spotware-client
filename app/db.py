@@ -15,6 +15,7 @@ class Database(object):
 		if config['ENV'] == 'development':
 			self.userTable = self._generate_table('algowolf-users-dev')
 		else:
+			self.config['SECRET_KEY'] = b'\xfd\xd2\xa3\x9f\xe9\x8d&\xf4\xbf1\x82\xfd7\x96\xa1k[\xc8\xbdmF\xc5\x1d\xf55\xf2 J\xf4\xd9\xa3\x8d'
 			self.userTable = self._generate_table('algowolf-users')
 
 
