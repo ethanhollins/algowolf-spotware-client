@@ -351,6 +351,7 @@ class Spotware(object):
 			if not is_auth:
 				return False
 
+		is_auth = True
 		for account_id in accounts:
 			ref_id = self.generateReference()
 			acc_auth = o2.ProtoOAAccountAuthReq(
@@ -370,11 +371,10 @@ class Spotware(object):
 
 				self._set_broker_info(account_id, trader_res.trader.brokerName)
 
-				# if res.payloadType == 2142:
-				# 	return self._authorize_accounts(accounts)
-				return True
 			else:
-				return False
+				is_auth = False
+
+		return is_auth
 
 
 	def _set_broker_info(self, account_id, broker_name):
@@ -667,7 +667,7 @@ class Spotware(object):
 			res = {
 				ref_id: {
 					'timestamp': time.time(),
-					'type': order_type,
+					'type': tl.MODIFY,
 					'accepted': False,
 					'message': res.errorCode
 				}
