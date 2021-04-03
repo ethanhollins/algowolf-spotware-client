@@ -264,6 +264,9 @@ class Spotware(object):
 				self._subscriptions[str(payload.symbolId)].onChartUpdate(payload)
 
 		else:
+			if payloadType == 2142 and payload.errorCode == "SERVER_IS_UNDER_MAINTENANCE":
+				self._spotware_connected = True
+
 			result = None
 			if 'ctidTraderAccountId' in payload.DESCRIPTOR.fields_by_name.keys():
 				# print(f'MSG: {payload}')
