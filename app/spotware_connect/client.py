@@ -170,7 +170,8 @@ class Client(object):
 						payload.ParseFromString(proto_msg.payload)
 						try:
 							for e in self._events[MESSAGE_EVENT]:
-								e(self.is_demo, proto_msg.payloadType, payload, proto_msg.clientMsgId)
+								Thread(target=e, args=(self.is_demo, proto_msg.payloadType, payload, proto_msg.clientMsgId)).start()
+								# e(self.is_demo, proto_msg.payloadType, payload, proto_msg.clientMsgId)
 						except Exception:
 							print(traceback.format_exc(), flush=True)
 

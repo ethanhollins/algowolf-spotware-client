@@ -255,8 +255,11 @@ class Spotware(object):
 		elif payloadType == 2101:
 			self._spotware_connected = True
 
-			for child in self.children:
-				child._authorize_accounts(child.accounts)
+			print('RE AUTH ACCOUNTS:', flush=True)
+			if is_demo:
+				for child in self.children:
+					print(child.accounts, flush=True)
+					child._authorize_accounts(child.accounts)
 
 		# Tick
 		elif payloadType == 2131:
