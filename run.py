@@ -277,13 +277,16 @@ def onCommand(data):
 
 def createApp():
 	print('CREATING APP')
-	sio.connect(
-		config['STREAM_URL'], 
-		headers={
-			'Broker': 'spotware'
-		}, 
-		namespaces=['/broker']
-	)
+	try:
+		sio.connect(
+			config['STREAM_URL'], 
+			headers={
+				'Broker': 'spotware'
+			}, 
+			namespaces=['/broker']
+		)
+	except Exception:
+		return createApp()
 
 	# PARENT_USER_CONFIG = config['PARENT_USER']
 	# parent = FXCM(**PARENT_USER_CONFIG)
