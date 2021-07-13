@@ -260,6 +260,8 @@ class Spotware(object):
 				for child in self.children:
 					print(child.accounts, flush=True)
 					child._authorize_accounts(child.accounts)
+					for sub in child._account_subscriptions:
+						sub.onAccountUpdate(None, None, {'type': 'connected'}, None)
 
 		# Tick
 		elif payloadType == 2131:
@@ -1307,136 +1309,6 @@ class Spotware(object):
 	def _subscribe_account_updates(self, msg_id):
 		subscription = AccountSubscription(self, msg_id)
 		self._account_subscriptions.append(subscription)
-
-
-	# def _handle_chart_update(self):
-	# 	time_off_timer = time.time()
-
-	# 	while True:
-	# 		result = []
-	# 		if len(self._price_queue):
-	# 			chart, payload = self._price_queue[0]
-	# 			# chart, update_time, bid, ask, volume = self._price_queue[0]
-	# 			del self._price_queue[0]
-
-	# 			ask = payload.ask / 100000
-	# 			bid = payload.bid / 100000
-
-	# 			volume = None
-	# 			c_ts = time.time()+self.time_off
-	# 			# Iterate periods
-	# 			if tl.period.TICK in chart.getActivePeriods():
-	# 				if ask:
-	# 					chart.ask[tl.period.TICK] = ask
-	# 				if bid:
-	# 					chart.bid[tl.period.TICK] = bid
-	# 				if chart.bid[tl.period.TICK] is not None and chart.ask[tl.period.TICK] is not None:
-	# 					chart.mid[tl.period.TICK] = np.around((chart.ask[tl.period.TICK] + chart.bid[tl.period.TICK])/2, decimals=5)
-
-	# 				result.append({
-	# 					'broker': self.name,
-	# 					'product': chart.product,
-	# 					'period': tl.period.TICK,
-	# 					'bar_end': False,
-	# 					'timestamp': time.time()+self.time_off,
-	# 					'item': {
-	# 						'ask': chart.ask[tl.period.TICK],
-	# 						'mid': chart.mid[tl.period.TICK],
-	# 						'bid': chart.bid[tl.period.TICK]
-	# 					}
-	# 				})
-
-
-	# 			for i in payload.trendbar:
-	# 				period = self._convert_sw_period(i.period)
-	# 				if period in chart.getActivePeriods():
-	# 					if (isinstance(chart.bid.get(period), np.ndarray) and 
-	# 						isinstance(chart.ask.get(period), np.ndarray)):
-
-	# 						bar_ts = i.utcTimestampInMinutes*60
-	# 						# Handle period bar end
-	# 						if chart.lastTs[period] is None:
-	# 							chart.lastTs[period] = bar_ts
-	# 						elif bar_ts > chart.lastTs[period]:
-	# 							result.append({
-	# 								'broker': self.name,
-	# 								'product': chart.product,
-	# 								'period': period,
-	# 								'bar_end': True,
-	# 								'timestamp': chart.lastTs[period],
-	# 								'item': {
-	# 									'ask': chart.ask[period].tolist(),
-	# 									'mid': chart.mid[period].tolist(),
-	# 									'bid': chart.bid[period].tolist()
-	# 								}
-	# 							})
-
-	# 							chart.lastTs[period] = bar_ts
-	# 							print(f'[SW] ({period}) Next: {chart.lastTs[period]}')
-
-	# 						new_low = i.low / 100000
-	# 						new_open = (i.low + i.deltaOpen) / 100000
-	# 						new_high = (i.low + i.deltaHigh) / 100000
-	# 						new_close = chart.mid[tl.period.TICK]
-	# 						new_ohlc = np.array([new_open, new_high, new_low, new_close], dtype=np.float64)
-
-	# 						chart.ask[period] = new_ohlc
-	# 						chart.mid[period] = new_ohlc
-	# 						chart.bid[period] = new_ohlc
-
-	# 						result.append({
-	# 							'broker': self.name,
-	# 							'product': chart.product,
-	# 							'period': period,
-	# 							'bar_end': False,
-	# 							'timestamp': chart.lastTs[period],
-	# 							'item': {
-	# 								'ask': chart.ask[period].tolist(),
-	# 								'mid': chart.mid[period].tolist(),
-	# 								'bid': chart.bid[period].tolist()
-	# 							}
-	# 						})
-
-	# 		else:
-	# 			for chart in self.charts:
-	# 				c_ts = time.time()+self.time_off-1
-	# 				for period in chart.getActivePeriods():
-	# 					if period != tl.period.TICK and chart.volume[period] > 0:
-	# 						# Handle period bar end
-	# 						is_new_bar = chart.isNewBar(period, c_ts)
-	# 						if is_new_bar:
-	# 							chart.volume[period] = 0
-	# 							result.append({
-	# 								'broker': self.name,
-	# 								'product': chart.product,
-	# 								'period': period,
-	# 								'bar_end': True,
-	# 								'timestamp': chart.lastTs[period],
-	# 								'item': {
-	# 									'ask': chart.ask[period].tolist(),
-	# 									'mid': chart.mid[period].tolist(),
-	# 									'bid': chart.bid[period].tolist()
-	# 								}
-	# 							})
-	# 							chart.lastTs[period] = tl.getNextTimestamp(period, chart.lastTs[period], now=c_ts - tl.period.getPeriodOffsetSeconds(period))
-	# 							print(f'[SW] ({period}) Next: {chart.lastTs[period]}')
-	# 							chart.ask[period] = np.array([chart.ask[period][3]]*4, dtype=np.float64)
-	# 							chart.bid[period] = np.array([chart.bid[period][3]]*4, dtype=np.float64)
-	# 							chart.mid[period] = np.array(
-	# 								[np.around(
-	# 									(chart.ask[period][3] + chart.bid[period][3])/2,
-	# 									decimals=5
-	# 								)]*4, 
-	# 							dtype=np.float64)
-
-	# 		if len(result):
-	# 			chart.handleTick(result)
-
-	# 		if time.time() - time_off_timer > ONE_HOUR:
-	# 			time_off_timer = time.time()
-	# 			self._set_time_off()
-
-	# 		time.sleep(0.01)
 
 
 	def onChartUpdate(self, chart, payload):
