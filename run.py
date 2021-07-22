@@ -3,6 +3,7 @@ import socketio
 import os
 import json
 import traceback
+import time
 from app.spotware import Spotware
 from app.db import Database
 
@@ -95,20 +96,29 @@ def sendResponse(msg_id, res):
 
 
 def onAddUser(user_id, broker_id, access_token, refresh_token, accounts, is_parent=False, is_dummy=False):
+	print('[onAddUser] 1', flush=True)
 	user = user_container.addUser(
 		user_id, broker_id, access_token, refresh_token, accounts, is_parent=is_parent, is_dummy=is_dummy
 	)
+	print('[onAddUser] 2', flush=True)
+
+	if access_token is not None and refresh_token is not None:
+		print('[onAddUser] 3', flush=True)
+		user.start()
 
 	# if is_dummy:
 	# 	getParent().deleteChild(user)
 
+	print('[onAddUser] 4', flush=True)
 	if user.is_auth:
+		print('[onAddUser] 5', flush=True)
 		return {
 			'access_token': user.access_token,
 			'refresh_token': user.refresh_token
 		}
 
 	else:
+		print('[onAddUser] 6', flush=True)
 		return {
 			'error': 'Not Authorised'
 		}
@@ -167,23 +177,21 @@ def _subscribe_chart_updates(user, msg_id, instrument):
 	}
 
 
-# Create Position EPT
+def onSwDisconnect():
+	while True:
+		try:
+			if not user_container.getParent().demo_client.is_connected:
+				self.demo_client.connect()
+		except Exception:
+			print(traceback.format_exc(), flush=True)
 
+		try:
+			if not user_container.getParent().live_client.is_connected:
+				self.live_client.connect()
+		except Exception:
+			print(traceback.format_exc(), flush=True)
 
-
-# Modify Position EPT
-
-# Delete Position EPT
-
-# Create Order EPT
-
-# Modify Order EPT
-
-# Delete Order EPT
-
-# Get Account Details EPT
-
-# Get All Accounts EPT
+		time.sleep(1)
 
 
 @sio.on('connect', namespace='/broker')
@@ -276,17 +284,22 @@ def onCommand(data):
 
 
 def createApp():
-	print('CREATING APP')
-	try:
-		sio.connect(
-			config['STREAM_URL'], 
-			headers={
-				'Broker': 'spotware'
-			}, 
-			namespaces=['/broker']
-		)
-	except Exception:
-		return createApp()
+	print('CREATING APP', flush=True)
+	onAddUser("PARENT", "PARENT", None, None, None, is_parent=True, is_dummy=False)
+	print('CREATING APP DONE', flush=True)
+
+	while True:
+		try:
+			sio.connect(
+				config['STREAM_URL'], 
+				headers={
+					'Broker': 'spotware'
+				}, 
+				namespaces=['/broker']
+			)
+			break
+		except Exception:
+			pass
 
 	# PARENT_USER_CONFIG = config['PARENT_USER']
 	# parent = FXCM(**PARENT_USER_CONFIG)
@@ -297,4 +310,6 @@ def createApp():
 
 if __name__ == '__main__':
 	sio = createApp()
-	print('DONE')
+	print('DONE', flush=True)
+
+	onSwDisconnect()

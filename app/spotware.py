@@ -68,6 +68,7 @@ class Spotware(object):
 		self.userId = user_id
 		self.brokerId = broker_id
 		self.accounts = accounts
+		self.is_parent = is_parent
 		self.is_dummy = is_dummy
 
 		self._spotware_connected = False
@@ -95,13 +96,15 @@ class Spotware(object):
 		self.access_token = access_token
 		self.refresh_token = refresh_token
 
+		self.is_auth = False
+
 		# self.time_off = 0
 		# self._set_time_off()
 
 		'''
 		Setup Spotware Funcs
 		'''
-		if is_parent:
+		if self.is_parent:
 			self.parent = self
 			self.children = []
 
@@ -119,9 +122,12 @@ class Spotware(object):
 			self.demo_client.connect()
 			self.live_client.connect()
 
-			while not self._spotware_connected:
-				pass
+			# while not self._spotware_connected:
+			# 	pass
 
+	
+	def start(self):
+		if self.is_parent:
 			self.is_auth = self._authorize_accounts(self.accounts, is_parent=True)
 
 			# Start refresh thread
@@ -131,7 +137,7 @@ class Spotware(object):
 			self.parent = self.container.getParent()
 			self.parent.addChild(self)
 			# self.client = self.parent.client
-			self.is_auth = self._authorize_accounts(accounts, is_dummy=is_dummy)
+			self.is_auth = self._authorize_accounts(self.accounts, is_dummy=self.is_dummy)
 
 
 	def _set_time_off(self):
@@ -515,7 +521,7 @@ class Spotware(object):
 		order_id = str(pos.positionId)
 		product = self._convert_sw_product(pos.tradeData.symbolId)
 		direction = tl.LONG if pos.tradeData.tradeSide == 1 else tl.SHORT
-		lotsize = pos.tradeData.volume
+		lotsize = self._convert_from_sw_lotsize(pos.tradeData.volume)
 		entry_price = pos.price
 		sl = None if pos.stopLoss == 0 else round(pos.stopLoss, 5)
 		tp = None if pos.takeProfit == 0 else round(pos.takeProfit, 5)
@@ -541,7 +547,7 @@ class Spotware(object):
 		order_id = str(order.orderId)
 		product = self._convert_sw_product(order.tradeData.symbolId)
 		direction = tl.LONG if order.tradeData.tradeSide == 1 else tl.SHORT
-		lotsize = order.tradeData.volume
+		lotsize = self._convert_from_sw_lotsize(order.tradeData.volume)
 		sl = None if order.stopLoss == 0 else round(order.stopLoss, 5)
 		tp = None if order.takeProfit == 0 else round(order.takeProfit, 5)
 		open_time = order.tradeData.openTimestamp / 1000
@@ -582,7 +588,7 @@ class Spotware(object):
 		broker_name = self.accounts[account_id]['broker']
 		sw_product = self._convert_product(broker_name, product)
 		direction = 1 if direction == tl.LONG else 2
-		lotsize = round(lotsize / 100000) * 100000
+		lotsize = self._convert_to_sw_lotsize(lotsize)
 
 		'''
 		TEMP
@@ -691,9 +697,11 @@ class Spotware(object):
 	def deletePosition(self, account_id, order_id, lotsize):
 		ref_id = self.generateReference()
 
+		lotsize = self._convert_to_sw_lotsize(lotsize)
+
 		close_req = o2.ProtoOAClosePositionReq(
 			ctidTraderAccountId=int(account_id),
-			positionId=int(order_id), volume=int(lotsize)
+			positionId=int(order_id), volume=lotsize
 		)
 		self._get_client(account_id).send(close_req, msgid=ref_id)
 
@@ -871,7 +879,7 @@ class Spotware(object):
 		direction = 1 if direction == tl.LONG else 2
 		sw_order_type = 3 if order_type == tl.STOP_ORDER else 2
 		# lotsize = round(lotsize / 1000000) * 1000000
-		lotsize = round(lotsize / 100000) * 100000
+		lotsize = self._convert_to_sw_lotsize(lotsize)
 
 		'''
 		TEMP
@@ -929,7 +937,7 @@ class Spotware(object):
 			TEMP
 			'''
 
-			args['volume'] = lotsize
+			args['volume'] = self._convert_to_sw_lotsize(lotsize)
 		if not sl_price is None:
 			args['stopLoss'] = sl_price
 		if not tp_price is None:
@@ -1063,10 +1071,10 @@ class Spotware(object):
 
 								# Partially Closed
 								else:
-									pos.lotsize -= update.order.executedVolume
+									pos.lotsize -= self._convert_from_sw_lotsize(update.order.executedVolume)
 
 									del_pos = tl.Position.fromDict(self, pos)
-									del_pos.lotsize = update.order.executedVolume
+									del_pos.lotsize = self._convert_from_sw_lotsize(update.order.executedVolume)
 									del_pos.close_price = update.order.executionPrice
 									del_pos.close_time = update.order.utcLastUpdateTimestamp / 1000
 
@@ -1316,6 +1324,14 @@ class Spotware(object):
 		return
 
 
+	def _convert_to_sw_lotsize(self, lotsize):
+		return round((round(lotsize, 2) * 10000000) / 100000) * 100000
+
+
+	def _convert_from_sw_lotsize(self, lotsize):
+		return round(lotsize / 10000000, 2)
+
+
 	def _convert_product(self, broker_name, product):
 		if product == 'BTC_USD':
 			product = 'BTC/USD'
@@ -1505,3 +1521,6 @@ class Spotware(object):
 				del self.children[i]
 				self.container.deleteUser(broker_id)
 				break
+
+		if broker_id in self.container.users:
+			del self.container.users[broker_id]

@@ -24,6 +24,7 @@ class Client(object):
 
 		self.broker = broker
 		self.is_demo = is_demo
+		self.is_connected = False
 		self.host = "demo.ctraderapi.com" if is_demo else "live.ctraderapi.com"
 		self.port = 5035
 
@@ -60,6 +61,8 @@ class Client(object):
 		PEM_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), "cert.pem")
 		self.ssock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLS, certfile=PEM_PATH, keyfile=PEM_PATH)
 		self.ssock.connect((self.host, self.port))
+
+		self.is_connected = True
 
 		print('[SC] Connected', flush=True)
 
@@ -131,52 +134,55 @@ class Client(object):
 		msg_len = 0
 		msg = b''
 
-		while True:
-			try:
-				recv = self.ssock.recv(1024)
-				if len(recv) == 0:
-					break
-				buffer += recv
-			except Exception:
-				print(f'[SC] ERROR:\n{traceback.format_exc()}', flush=True)
-				break
-
-			while len(buffer):
-				# print(buffer)
-				# Retrieve message length
-				if msg_len == 0:
-					if len(buffer) >= 4:
-						msg_len = unpack("!I", buffer[:4])[0]
-						buffer = buffer[4:]
-					else:
+		try:
+			while True:
+				try:
+					recv = self.ssock.recv(1024)
+					if len(recv) == 0:
 						break
+					buffer += recv
+				except Exception:
+					print(f'[SC] ERROR:\n{traceback.format_exc()}', flush=True)
+					break
 
-				# Retrieve message
-				if msg_len > 0:
-					# Get new message
-					new_message = buffer[:msg_len]
-					# Delete read info from buffer
-					buffer = buffer[min(len(buffer), msg_len):]
-					# Update msg length remaining
-					msg_len -= len(new_message)
-					# Add to result message
-					msg += new_message
-
+				while len(buffer):
+					# print(buffer)
+					# Retrieve message length
 					if msg_len == 0:
-						# Message callback
-						proto_msg = o1.ProtoMessage()
-						proto_msg.ParseFromString(msg)
-						payload = self._protos[proto_msg.payloadType]()
-						payload.ParseFromString(proto_msg.payload)
-						try:
-							for e in self._events[MESSAGE_EVENT]:
-								Thread(target=e, args=(self.is_demo, proto_msg.payloadType, payload, proto_msg.clientMsgId)).start()
-								# e(self.is_demo, proto_msg.payloadType, payload, proto_msg.clientMsgId)
-						except Exception:
-							print(traceback.format_exc(), flush=True)
+						if len(buffer) >= 4:
+							msg_len = unpack("!I", buffer[:4])[0]
+							buffer = buffer[4:]
+						else:
+							break
+
+					# Retrieve message
+					if msg_len > 0:
+						# Get new message
+						new_message = buffer[:msg_len]
+						# Delete read info from buffer
+						buffer = buffer[min(len(buffer), msg_len):]
+						# Update msg length remaining
+						msg_len -= len(new_message)
+						# Add to result message
+						msg += new_message
+
+						if msg_len == 0:
+							# Message callback
+							proto_msg = o1.ProtoMessage()
+							proto_msg.ParseFromString(msg)
+							payload = self._protos[proto_msg.payloadType]()
+							payload.ParseFromString(proto_msg.payload)
+							try:
+								for e in self._events[MESSAGE_EVENT]:
+									Thread(target=e, args=(self.is_demo, proto_msg.payloadType, payload, proto_msg.clientMsgId)).start()
+									# e(self.is_demo, proto_msg.payloadType, payload, proto_msg.clientMsgId)
+							except Exception:
+								print(traceback.format_exc(), flush=True)
 
 
-						msg = b''
+							msg = b''
+		except Exception:
+			print(f'[SC] (client.receive) Error:\n{traceback.format_exc()}', flush=True)
 
 		print('[SC] Disconnected...', flush=True)
 		try:
@@ -185,7 +191,8 @@ class Client(object):
 		except Exception:
 			print(traceback.format_exc(), flush=True)
 
-		self.reconnect()
+		# self.reconnect()
+		self.is_connected = False
 
 
 	def stop(self):
