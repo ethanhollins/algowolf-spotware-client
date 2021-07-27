@@ -124,6 +124,21 @@ class Spotware(object):
 
 			# while not self._spotware_connected:
 			# 	pass
+		else:
+			self.parent = self.container.getParent()
+			self.parent.addChild(self)
+
+
+	def setVars(self, user_id, broker_id, access_token=None, refresh_token=None, 
+		accounts={}, is_parent=False, is_dummy=False):
+		self.userId = user_id
+		self.brokerId = broker_id
+		self.accounts = accounts
+		self.is_parent = is_parent
+		self.is_dummy = is_dummy
+
+		self.access_token = access_token
+		self.refresh_token = refresh_token
 
 	
 	def start(self):
@@ -134,8 +149,6 @@ class Spotware(object):
 			Thread(target=self._periodic_refresh).start()
 
 		else:
-			self.parent = self.container.getParent()
-			self.parent.addChild(self)
 			# self.client = self.parent.client
 			self.is_auth = self._authorize_accounts(self.accounts, is_dummy=self.is_dummy)
 

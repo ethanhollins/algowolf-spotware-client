@@ -48,6 +48,9 @@ class UserContainer(object):
 			if is_parent:
 				self.parent = self.users[broker_id]
 
+		else:
+			self.users[broker_id].setVars(user_id, broker_id, access_token, refresh_token, accounts, is_parent, is_dummy)
+
 		return self.users[broker_id]
 
 
@@ -102,7 +105,7 @@ def onAddUser(user_id, broker_id, access_token, refresh_token, accounts, is_pare
 	)
 	print('[onAddUser] 2', flush=True)
 
-	if access_token is not None and refresh_token is not None:
+	if access_token is not None:
 		print('[onAddUser] 3', flush=True)
 		user.start()
 
@@ -181,13 +184,13 @@ def onSwDisconnect():
 	while True:
 		try:
 			if not user_container.getParent().demo_client.is_connected:
-				self.demo_client.connect()
+				user_container.getParent().demo_client.connect()
 		except Exception:
 			print(traceback.format_exc(), flush=True)
 
 		try:
 			if not user_container.getParent().live_client.is_connected:
-				self.live_client.connect()
+				user_container.getParent().live_client.connect()
 		except Exception:
 			print(traceback.format_exc(), flush=True)
 
