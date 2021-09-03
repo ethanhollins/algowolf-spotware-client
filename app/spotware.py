@@ -274,13 +274,26 @@ class Spotware(object):
 		elif payloadType == 2101:
 			self._spotware_connected = True
 
-			print('RE AUTH ACCOUNTS:', flush=True)
+			print(f'RE AUTH ACCOUNTS: {is_demo} {self.children}', flush=True)
+
 			if is_demo:
+				# Wait for both clients to be connected before reconnecting
+				start_time = time.time()
+				while not self.demo_client.is_connected or not self.live_client.is_connected:
+					if time.time() - start_time > 10:
+						return
+					time.sleep(1)
+
+				if self.accounts is not None:
+					self.is_auth = self._authorize_accounts(self.accounts, is_parent=True)
+					
 				for child in self.children:
 					print(child.accounts, flush=True)
 					child._authorize_accounts(child.accounts)
 					for sub in child._account_subscriptions:
 						sub.onAccountUpdate(None, None, {'type': 'connected'}, None)
+
+				self.parent._resubscribe_chart_updates()
 
 		# Tick
 		elif payloadType == 2131:
@@ -336,7 +349,7 @@ class Spotware(object):
 
 
 	def _refresh_token(self, is_parent=False):
-		print(f'REFRESH: {self.refresh_token}', flush=True)
+		print(f'REFRESH: (A) {self.access_token} (R) {self.refresh_token}', flush=True)
 
 		ref_id = self.generateReference()
 		refresh_req = o2.ProtoOARefreshTokenReq(
@@ -347,6 +360,7 @@ class Spotware(object):
 		if res.payloadType == 2174:
 			self.access_token = res.accessToken
 			self.refresh_token = res.refreshToken
+			print(f'NEW: (A) {self.access_token} (R) {self.refresh_token}', flush=True)
 			if is_parent:
 				self.container.db.updateUser(
 					'spotware',
@@ -1296,6 +1310,34 @@ class Spotware(object):
 			self._get_client(list(self.accounts.keys())[0]).send(sub_req)
 
 
+	def _resubscribe_chart_updates(self):
+		for instrument in self.parent._subscriptions:
+			ref_id = self.generateReference()
+			
+			sub_req = o2.ProtoOASubscribeSpotsReq(
+				ctidTraderAccountId=int(list(self.accounts.keys())[0]),
+				symbolId=[int(instrument)]
+			)
+			self._get_client(list(self.accounts.keys())[0]).send(sub_req, msgid=ref_id)
+			self.parent._wait(ref_id)
+
+			# sub_req = o2.ProtoOASubscribeLiveTrendbarReq(
+			# 	ctidTraderAccountId=int(list(self.accounts.keys())[0]),
+			# 	symbolId=product, period=1
+			# )
+			# self._get_client(list(self.accounts.keys())[0]).send(sub_req)
+
+			for i in range(14):
+				if i % 5 == 0:
+					time.sleep(1)
+
+				sub_req = o2.ProtoOASubscribeLiveTrendbarReq(
+					ctidTraderAccountId=int(list(self.accounts.keys())[0]),
+					symbolId=int(instrument), period=i+1
+				)
+				self._get_client(list(self.accounts.keys())[0]).send(sub_req)
+
+
 	def _subscribe_multiple_chart_updates(self, products, listener):
 		ref_id = self.generateReference()
 
@@ -1537,3 +1579,12 @@ class Spotware(object):
 
 		if broker_id in self.container.users:
 			del self.container.users[broker_id]
+
+
+	def disconnectBroker(self):
+		self.parent.live_client.disconnect()
+		self.parent.demo_client.disconnect()
+
+		return {
+			'result': 'success'
+		}

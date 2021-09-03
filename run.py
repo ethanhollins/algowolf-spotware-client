@@ -277,6 +277,9 @@ def onCommand(data):
 			elif cmd == 'checkAccessToken':
 				res = getParent().checkAccessToken(*data.get('args'), **data.get('kwargs'))
 
+			elif cmd == 'disconnectBroker':
+				res = getParent().disconnectBroker()
+
 			sendResponse(data.get('msg_id'), res)
 
 	except Exception as e:

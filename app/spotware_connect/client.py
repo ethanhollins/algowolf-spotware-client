@@ -76,6 +76,13 @@ class Client(object):
 			print(traceback.format_exc(), flush=True)
 
 
+	def disconnect(self):
+		try:
+			self.ssock.shutdown(1)
+		except Exception:
+			print(traceback.format_exc(), flush=True)
+
+
 	def reconnect(self):
 		while True:
 			print('[SC] Attempting reconnect.', flush=True)
