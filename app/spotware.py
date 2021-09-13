@@ -362,13 +362,22 @@ class Spotware(object):
 			self.refresh_token = res.refreshToken
 			print(f'NEW: (A) {self.access_token} (R) {self.refresh_token}', flush=True)
 			if is_parent:
-				self.container.db.updateUser(
-					'spotware',
-					{
-						'access_token': self.access_token,
-						'refresh_token': self.refresh_token
-					}
-				)
+				if self.container.getConfig()['SERVER'] == 0:
+					self.container.db.updateUser(
+						'spotware',
+						{
+							'access_token': self.access_token,
+							'refresh_token': self.refresh_token
+						}
+					)
+				elif self.container.getConfig()['SERVER'] == 1:
+					self.container.db.updateUser(
+						'spotware_1',
+						{
+							'access_token': self.access_token,
+							'refresh_token': self.refresh_token
+						}
+					)
 
 			else:
 				self.container.db.updateBroker(
