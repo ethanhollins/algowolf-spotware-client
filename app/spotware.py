@@ -97,6 +97,7 @@ class Spotware(object):
 		self.refresh_token = refresh_token
 
 		self.is_auth = False
+		self.initialized = False
 
 		# self.time_off = 0
 		# self._set_time_off()
@@ -142,6 +143,7 @@ class Spotware(object):
 
 	
 	def start(self):
+		self.initialized = True
 		if self.is_parent:
 			self.is_auth = self._authorize_accounts(self.accounts, is_parent=True)
 
@@ -184,6 +186,12 @@ class Spotware(object):
 					pass
 
 			time.sleep(1)
+
+
+	def heartbeat(self):
+		return {
+			"initialized": self.initialized
+		}
 
 
 	def _wait(self, ref_id, polling=0.1, timeout=30):
@@ -272,22 +280,22 @@ class Spotware(object):
 			self._last_update = time.time()
 
 		elif payloadType == 2101:
-			self._spotware_connected = True
+			self.parent._spotware_connected = True
 
-			print(f'RE AUTH ACCOUNTS: {is_demo} {self.children}', flush=True)
+			print(f'RE AUTH ACCOUNTS: {is_demo} {self.parent.children}', flush=True)
 
 			if is_demo:
 				# Wait for both clients to be connected before reconnecting
 				start_time = time.time()
-				while not self.demo_client.is_connected or not self.live_client.is_connected:
-					if time.time() - start_time > 10:
+				while not self.parent.demo_client.is_connected or not self.parent.live_client.is_connected:
+					if time.time() - start_time > 30:
 						return
 					time.sleep(1)
 
-				if self.accounts is not None:
-					self.is_auth = self._authorize_accounts(self.accounts, is_parent=True)
+				if self.parent.accounts is not None:
+					self.parent.is_auth = self.parent._authorize_accounts(self.parent.accounts, is_parent=True)
 					
-				for child in self.children:
+				for child in self.parent.children:
 					print(child.accounts, flush=True)
 					child._authorize_accounts(child.accounts)
 					for sub in child._account_subscriptions:
@@ -303,12 +311,14 @@ class Spotware(object):
 		else:
 			if payloadType == 2142 and payload.errorCode == "SERVER_IS_UNDER_MAINTENANCE":
 				self._spotware_connected = True
+			elif payloadType == 2142 and payload.errorCode == "CANT_ROUTE_REQUEST":
+				self._spotware_connected = False
 
 			result = None
 			if 'ctidTraderAccountId' in payload.DESCRIPTOR.fields_by_name.keys():
 				# print(f'MSG: {payload}')
 				account_id = payload.ctidTraderAccountId
-				for child in copy(self.children):
+				for child in copy(self.parent.children):
 					if account_id in map(int, child.accounts.keys()):
 						# result = child._on_account_update(account_id, payload, msgid)
 						for sub in child._account_subscriptions:

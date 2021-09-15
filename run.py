@@ -280,6 +280,9 @@ def onCommand(data):
 			elif cmd == 'disconnectBroker':
 				res = getParent().disconnectBroker()
 
+			elif cmd == 'heartbeat':
+				res = getParent().heartbeat()
+
 			sendResponse(data.get('msg_id'), res)
 
 	except Exception as e:

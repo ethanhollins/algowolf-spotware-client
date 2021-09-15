@@ -50,9 +50,12 @@ class Client(object):
 	def connect(self, timeout=None):
 		if self.ssock is not None:
 			try:
+				self.ssock.shutdown(1)
 				self.ssock.close()
 			except Exception:
-				pass
+				print(traceback.format_exc())
+			finally:
+				self.ssock = None
 
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		if timeout:
@@ -79,6 +82,7 @@ class Client(object):
 	def disconnect(self):
 		try:
 			self.ssock.shutdown(1)
+			self.ssock.close()
 		except Exception:
 			print(traceback.format_exc(), flush=True)
 
@@ -203,6 +207,7 @@ class Client(object):
 
 
 	def stop(self):
+		self.ssock.shutdown(1)
 		self.ssock.close()
 
 
