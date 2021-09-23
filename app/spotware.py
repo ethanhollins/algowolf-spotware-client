@@ -421,7 +421,16 @@ class Spotware(object):
 			self._get_client(account_id).send(acc_auth, msgid=ref_id)
 			res = self.parent._wait(ref_id)
 			
-			if res.payloadType != 2142:
+			is_auth = False
+			if res.payloadType == 2142:
+				if res.errorCode == "ALREADY_LOGGED_IN":
+					is_auth = True
+				else:
+					is_auth = False
+			else:
+				is_auth = True
+			
+			if is_auth:
 				trader_ref_id = self.generateReference()
 				trader_req = o2.ProtoOATraderReq(
 					ctidTraderAccountId=int(account_id)
@@ -430,9 +439,6 @@ class Spotware(object):
 				trader_res = self.parent._wait(trader_ref_id)
 
 				self._set_broker_info(account_id, trader_res.trader.brokerName)
-
-			else:
-				is_auth = False
 
 		return is_auth
 
