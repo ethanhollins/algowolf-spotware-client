@@ -619,6 +619,7 @@ class Spotware(object):
 		)
 		self._get_client(account_id).send(pos_req, msgid=ref_id)
 		res = self.parent._wait(ref_id)
+		print(f"[_get_all_positions] {res}", flush=True)
 
 		result = { account_id: [] }
 		if res.payloadType == 2125:
