@@ -4,6 +4,8 @@ import os
 import json
 import traceback
 import time
+import shortuuid
+from redis import Redis
 from app.spotware import Spotware
 from app.db import Database
 
@@ -21,6 +23,8 @@ class UserContainer(object):
 		self.config = config
 		self.parent = None
 		self.users = {}
+		self.add_user_queue = []
+		self.redis_client = Redis(host='redis', port=6379, password="dev")
 
 
 	def getSio(self):
@@ -39,10 +43,10 @@ class UserContainer(object):
 		return self.parent
 
 
-	def addUser(self, user_id, broker_id, access_token, refresh_token, accounts, is_parent, is_dummy):
+	def addUser(self, user_id, strategy_id, broker_id, access_token, refresh_token, accounts, is_parent, is_dummy):
 		if broker_id not in self.users:
 			self.users[broker_id] = Spotware(
-				self, user_id, broker_id, access_token=access_token, refresh_token=refresh_token, 
+				self, user_id, strategy_id, broker_id, access_token=access_token, refresh_token=refresh_token, 
 				accounts=accounts, is_parent=is_parent, is_dummy=is_dummy
 			)
 			if is_parent:
@@ -61,6 +65,17 @@ class UserContainer(object):
 
 	def getUser(self, broker_id):
 		return self.users.get(broker_id)
+
+
+	def addToUserQueue(self):
+		_id = shortuuid.uuid()
+		self.add_user_queue.append(_id)
+		while self.add_user_queue[0] != _id:
+			time.sleep(0.1)
+
+
+	def popUserQueue(self):
+		del self.add_user_queue[0]
 
 
 def getConfig():
@@ -98,19 +113,30 @@ def sendResponse(msg_id, res):
 	)
 
 
-def onAddUser(user_id, broker_id, access_token, refresh_token, accounts, is_parent=False, is_dummy=False):
-	print('[onAddUser] 1', flush=True)
-	user = user_container.addUser(
-		user_id, broker_id, access_token, refresh_token, accounts, is_parent=is_parent, is_dummy=is_dummy
-	)
-	print('[onAddUser] 2', flush=True)
+def onAddUser(user_id, strategy_id, broker_id, access_token, refresh_token, accounts, is_parent=False, is_dummy=False):
+	user_container.addToUserQueue()
+	try:
+		print('[onAddUser] 1', flush=True)
+		if broker_id == "PARENT" or broker_id not in user_container.users:
+			user = user_container.addUser(
+				user_id, strategy_id, broker_id, access_token, refresh_token, accounts, is_parent=is_parent, is_dummy=is_dummy
+			)
+			print('[onAddUser] 2', flush=True)
 
-	if access_token is not None:
-		print('[onAddUser] 3', flush=True)
-		user.start()
+			if access_token is not None:
+				print('[onAddUser] 3', flush=True)
+				user.start()
+				
+		else:
+			user = user_container.getUser(broker_id)
 
-	# if is_dummy:
-	# 	getParent().deleteChild(user)
+		# if is_dummy:
+		# 	getParent().deleteChild(user)
+
+	except Exception:
+		print(traceback.format_exc())
+	finally:
+		user_container.popUserQueue()
 
 	print('[onAddUser] 4', flush=True)
 	if user.is_auth:
@@ -180,7 +206,7 @@ def _subscribe_chart_updates(user, msg_id, instrument):
 	}
 
 
-def onSwDisconnect():
+def onSwMainLoop():
 	while True:
 		try:
 			if not user_container.getParent().demo_client.is_connected:
@@ -193,6 +219,8 @@ def onSwDisconnect():
 				user_container.getParent().live_client.connect()
 		except Exception:
 			print(traceback.format_exc(), flush=True)
+
+		
 
 		time.sleep(1)
 
@@ -294,7 +322,7 @@ def onCommand(data):
 
 def createApp():
 	print('CREATING APP', flush=True)
-	onAddUser("PARENT", "PARENT", None, None, None, is_parent=True, is_dummy=False)
+	onAddUser("PARENT", "PARENT", "PARENT", None, None, None, is_parent=True, is_dummy=False)
 	print('CREATING APP DONE', flush=True)
 
 	while True:
@@ -321,4 +349,4 @@ if __name__ == '__main__':
 	sio = createApp()
 	print('DONE', flush=True)
 
-	onSwDisconnect()
+	onSwMainLoop()

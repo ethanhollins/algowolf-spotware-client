@@ -61,11 +61,12 @@ class AccountSubscription(object):
 class Spotware(object):
 
 	def __init__(self,
-		container, user_id, broker_id, access_token=None, refresh_token=None, 
+		container, user_id, strategy_id, broker_id, access_token=None, refresh_token=None, 
 		accounts={}, is_parent=False, is_dummy=False
 	):
 		self.container = container
 		self.userId = user_id
+		self.strategyId = strategy_id
 		self.brokerId = broker_id
 		self.accounts = accounts
 		self.is_parent = is_parent
@@ -77,6 +78,7 @@ class Spotware(object):
 		self._subscriptions = {}
 		self._chart_subscriptions = []
 		self._account_subscriptions = []
+		self._account_update_queue = []
 		self._handled = {}
 		self._handled_position_events = {
 			tl.MARKET_ENTRY: {},
@@ -101,6 +103,8 @@ class Spotware(object):
 
 		# self.time_off = 0
 		# self._set_time_off()
+
+		Thread(target=self.accountUpdateLoop).start()
 
 		'''
 		Setup Spotware Funcs
@@ -147,13 +151,12 @@ class Spotware(object):
 		if self.is_parent:
 			self.is_auth = self._authorize_accounts(self.accounts, is_parent=True)
 
-			# Start refresh thread
-			Thread(target=self._periodic_refresh).start()
-
 		else:
 			# self.client = self.parent.client
 			self.is_auth = self._authorize_accounts(self.accounts, is_dummy=self.is_dummy)
 
+		# Start refresh thread
+		Thread(target=self._periodic_refresh).start()
 
 	def _set_time_off(self):
 		try:
@@ -175,15 +178,30 @@ class Spotware(object):
 	def _periodic_refresh(self):
 		TWO_SECONDS = 2
 		while self.is_running:
-			if time.time() - self._last_update > TWO_SECONDS:
-				try:
-					heartbeat = o1.ProtoHeartbeatEvent()
-					self.demo_client.send(heartbeat)
-					self.live_client.send(heartbeat)
-					self._last_update = time.time()
-				except Exception as e:
-					print(f'[SC] {str(e)}', flush=True)
-					pass
+			if self.is_parent:
+				if time.time() - self._last_update > TWO_SECONDS:
+					try:
+						heartbeat = o1.ProtoHeartbeatEvent()
+						self.demo_client.send(heartbeat)
+						self.live_client.send(heartbeat)
+						self._last_update = time.time()
+					except Exception as e:
+						print(f'[SC] {str(e)}', flush=True)
+						pass
+			else:
+				if time.time() - self._last_update > 30:
+					try:
+						self._last_update = time.time()
+						for account_id in self.accounts:
+							ref_id = self.generateReference()
+							pos_req = o2.ProtoOAReconcileReq(
+								ctidTraderAccountId=int(account_id)
+							)
+							self._get_client(account_id).send(pos_req, msgid=ref_id)
+							self.parent._wait(ref_id)
+					except Exception as e:
+						print(f'[SC] {str(e)}', flush=True)
+						pass
 
 			time.sleep(1)
 
@@ -298,8 +316,9 @@ class Spotware(object):
 				for child in self.parent.children:
 					print(child.accounts, flush=True)
 					child._authorize_accounts(child.accounts)
-					for sub in child._account_subscriptions:
-						sub.onAccountUpdate(None, None, {'type': 'connected'}, None)
+					# for sub in child._account_subscriptions:
+						# sub.onAccountUpdate(None, None, {'type': 'connected'}, None)
+					child._account_update_queue.append((None, None, {'type': 'connected'}, None))
 
 				self.parent._resubscribe_chart_updates()
 
@@ -320,9 +339,9 @@ class Spotware(object):
 				account_id = payload.ctidTraderAccountId
 				for child in copy(self.parent.children):
 					if account_id in map(int, child.accounts.keys()):
-						# result = child._on_account_update(account_id, payload, msgid)
-						for sub in child._account_subscriptions:
-							sub.onAccountUpdate(payloadType, account_id, MessageToDict(payload), msgid)
+						# for sub in child._account_subscriptions:
+							# sub.onAccountUpdate(payloadType, account_id, MessageToDict(payload), msgid)
+						child._account_update_queue.append((payloadType, account_id, MessageToDict(payload), msgid))
 
 						# if isinstance(result, dict): 
 						# 	for k, v in result.items():
@@ -570,14 +589,14 @@ class Spotware(object):
 
 
 	def convert_sw_position(self, account_id, pos):
-		order_id = str(pos.positionId)
-		product = self._convert_sw_product(pos.tradeData.symbolId)
-		direction = tl.LONG if pos.tradeData.tradeSide == 1 else tl.SHORT
-		lotsize = self._convert_from_sw_lotsize(pos.tradeData.volume)
-		entry_price = pos.price
-		sl = None if pos.stopLoss == 0 else round(pos.stopLoss, 5)
-		tp = None if pos.takeProfit == 0 else round(pos.takeProfit, 5)
-		open_time = pos.tradeData.openTimestamp / 1000
+		order_id = str(pos['positionId'])
+		product = self._convert_sw_product(int(pos['tradeData']['symbolId']))
+		direction = tl.LONG if pos['tradeData']['tradeSide'] == 'BUY' else tl.SHORT
+		lotsize = self._convert_from_sw_lotsize(float(pos['tradeData']['volume']))
+		entry_price = float(pos['price'])
+		sl = None if pos.get('stopLoss') is None or float(pos['stopLoss']) == 0 else round(float(pos['stopLoss']), 5)
+		tp = None if pos.get('takeProfit') is None or float(pos['takeProfit']) == 0 else round(float(pos['takeProfit']), 5)
+		open_time = float(pos['tradeData']['openTimestamp']) / 1000
 
 		return tl.Position(
 			self,
@@ -589,20 +608,39 @@ class Spotware(object):
 
 	def convert_sw_order(self, account_id, order):
 		entry_price = None
-		if order.orderType == 3:
-			entry_price = order.stopPrice
+		if order['orderType'] == 'STOP':
+			entry_price = float(order['stopPrice'])
 			order_type = tl.STOP_ORDER
-		elif order.orderType == 2:
-			entry_price = order.limitPrice
+		elif order['orderType'] == 'LIMIT':
+			entry_price = float(order['limitPrice'])
 			order_type = tl.LIMIT_ORDER
 
-		order_id = str(order.orderId)
-		product = self._convert_sw_product(order.tradeData.symbolId)
-		direction = tl.LONG if order.tradeData.tradeSide == 1 else tl.SHORT
-		lotsize = self._convert_from_sw_lotsize(order.tradeData.volume)
-		sl = None if order.stopLoss == 0 else round(order.stopLoss, 5)
-		tp = None if order.takeProfit == 0 else round(order.takeProfit, 5)
-		open_time = order.tradeData.openTimestamp / 1000
+		order_id = str(order['orderId'])
+		product = self._convert_sw_product(int(order['tradeData']['symbolId']))
+		direction = tl.LONG if order['tradeData']['tradeSide'] == 'BUY' else tl.SHORT
+		lotsize = self._convert_from_sw_lotsize(float(order['tradeData']['volume']))
+
+		if order.get('stopLoss') is not None:
+			sl = round(float(order['stopLoss']), 5)
+		elif order.get('relativeStopLoss') is not None:
+			if direction == tl.LONG:
+				sl = round(entry_price - tl.utils.convertToPrice(float(order.get('relativeStopLoss'))/10), 5)
+			else:
+				sl = round(entry_price + tl.utils.convertToPrice(float(order.get('relativeStopLoss'))/10), 5)
+		else:
+			sl = None
+
+		if order.get('takeProfit') is not None:
+			tp = round(float(order['takeProfit']), 5)
+		elif order.get('relativeTakeProfit') is not None:
+			if direction == tl.LONG:
+				tp = round(entry_price + tl.utils.convertToPrice(float(order.get('relativeTakeProfit'))/10), 5)
+			else:
+				tp = round(entry_price - tl.utils.convertToPrice(float(order.get('relativeTakeProfit'))/10), 5)
+		else:
+			tp = None
+
+		open_time = float(order['tradeData']['openTimestamp']) / 1000
 
 		return tl.Order(
 			self,
@@ -624,7 +662,7 @@ class Spotware(object):
 		result = { account_id: [] }
 		if res.payloadType == 2125:
 			for pos in res.position:
-				new_pos = self.convert_sw_position(account_id, pos)
+				new_pos = self.convert_sw_position(account_id, MessageToDict(pos))
 
 				result[account_id].append(new_pos)
 
@@ -810,7 +848,7 @@ class Spotware(object):
 		result = { account_id: [] }
 		if res.payloadType == 2125:
 			for order in res.order:
-				new_order = self.convert_sw_order(account_id, order)
+				new_order = self.convert_sw_order(account_id, MessageToDict(order))
 
 				result[account_id].append(new_order)
 
@@ -887,7 +925,6 @@ class Spotware(object):
 		result = {}
 
 		currency = self._get_asset(res.trader.brokerName, res.trader.depositAssetId)['name']
-		# balance = self.ctrl.spots[currency].convertFrom(res.trader.balance/100)
 		balance = res.trader.balance/100
 
 		print(f'INFO: {currency}, {balance}', flush=True)
@@ -1059,251 +1096,6 @@ class Spotware(object):
 		return res
 
 
-	def _on_account_update(self, account_id, update, ref_id):
-		if update.payloadType == 2126:
-			# if not ref_id:
-			ref_id = self.generateReference()
-
-			print(f'Account Update: {update}', flush=True)
-			execution_type = update.executionType
-
-			result = {}
-			# ORDER_FILLED
-			if execution_type == 3:
-				# Check `closingOrder`
-				if update.order.closingOrder:
-					# Delete
-					for i in range(len(self.positions)):
-						pos = self.positions[i]
-						if str(update.position.positionId) == pos.order_id:
-							if update.order.orderType == 4:
-								pos.close_price = update.order.executionPrice
-								pos.close_time = update.order.utcLastUpdateTimestamp / 1000
-
-								del self.positions[i]
-
-								if update.order.limitPrice:
-									tp_dist = abs(update.order.executionPrice - update.order.limitPrice)
-								else:
-									tp_dist = None
-
-								if update.order.limitPrice:
-									sl_dist = abs(update.order.executionPrice - update.order.stopPrice)
-								else:
-									sl_dist = None
-
-								if sl_dist is None or tp_dist < sl_dist:
-									order_type = tl.TAKE_PROFIT
-								else:
-									order_type = tl.STOP_LOSS
-
-								result.update({
-									ref_id: {
-										'timestamp': pos.close_time,
-										'type': order_type,
-										'accepted': True,
-										'item': pos
-									}
-								})
-							else:
-								# Fully Closed
-								if update.position.tradeData.volume == 0:
-									pos.close_price = update.order.executionPrice
-									pos.close_time = update.order.utcLastUpdateTimestamp / 1000
-
-									del self.positions[i]
-
-									result.update({
-										ref_id: {
-											'timestamp': pos.close_time,
-											'type': tl.POSITION_CLOSE,
-											'accepted': True,
-											'item': pos
-										}
-									})
-
-								# Partially Closed
-								else:
-									pos.lotsize -= self._convert_from_sw_lotsize(update.order.executedVolume)
-
-									del_pos = tl.Position.fromDict(self, pos)
-									del_pos.lotsize = self._convert_from_sw_lotsize(update.order.executedVolume)
-									del_pos.close_price = update.order.executionPrice
-									del_pos.close_time = update.order.utcLastUpdateTimestamp / 1000
-
-									result.update({
-										ref_id: {
-											'timestamp': del_pos.close_time,
-											'type': tl.POSITION_CLOSE,
-											'accepted': True,
-											'item': del_pos
-										}
-									})
-
-							break
-				else:
-					order_type = tl.MARKET_ENTRY
-					for i in range(len(self.orders)):
-						order = self.orders[i]
-						if str(update.order.orderId) == order.order_id:
-							order.close_time = update.order.utcLastUpdateTimestamp / 1000
-							if order.order_type == tl.STOP_ORDER:
-								order_type = tl.STOP_ENTRY
-							elif order.order_type == tl.LIMIT_ORDER:
-								order_type = tl.LIMIT_ENTRY
-							del self.orders[i]
-
-							self.handleOnTrade(
-								account_id,
-								{
-									self.generateReference(): {
-										'timestamp': order.close_time,
-										'type': tl.ORDER_CANCEL,
-										'accepted': True,
-										'item': order
-									}
-								}
-							)
-							break
-
-					# Create
-					new_pos = self.convert_sw_position(account_id, update.position)
-					self.positions.append(new_pos)
-
-					result.update({
-						ref_id: {
-							'timestamp': new_pos.open_time,
-							'type': order_type,
-							'accepted': True,
-							'item': new_pos
-						}
-					})
-
-			# ORDER_ACCEPTED
-			elif execution_type == 2:
-				# Check if `STOP` or `LIMIT`
-				if update.order.orderType in (2,3):
-					new_order = self.convert_sw_order(account_id, update.order)
-					self.orders.append(new_order)
-
-					result.update({
-						ref_id: {
-							'timestamp': update.order.utcLastUpdateTimestamp/1000,
-							'type': new_order.order_type,
-							'accepted': True,
-							'item': new_order
-						}
-					})
-
-				# Check if `STOP_LOSS_TAKE_PROFIT`
-				elif update.order.orderType == 4:
-					for pos in self.positions:
-						if str(update.position.positionId) == pos.order_id:
-							new_sl = None if update.position.stopLoss == 0 else update.position.stopLoss
-							pos.sl = new_sl
-							new_tp = None if update.position.takeProfit == 0 else update.position.takeProfit
-							pos.tp = new_tp
-
-							result.update({
-								ref_id: {
-									'timestamp': update.order.utcLastUpdateTimestamp/1000,
-									'type': tl.MODIFY,
-									'accepted': True,
-									'item': pos
-								}
-							})
-
-							break
-
-			# ORDER_CANCELLED
-			elif execution_type == 5:
-				# Check if `STOP` or `LIMIT`
-				if update.order.orderType in (2,3):
-					# Update current order
-					new_order = self.convert_sw_order(account_id, update.order)
-					for i in range(len(self.orders)):
-						order = self.orders[i]
-						if str(update.order.orderId) == order.order_id:
-							order.close_time = update.order.utcLastUpdateTimestamp / 1000
-
-							del self.orders[i]
-
-							result.update({
-								ref_id: {
-									'timestamp': order.close_time,
-									'type': tl.ORDER_CANCEL,
-									'accepted': True,
-									'item': order
-								}
-							})
-
-							break
-
-				# Check if `STOP_LOSS_TAKE_PROFIT`
-				elif update.order.orderType == 4:
-					for pos in self.positions:
-						if str(update.position.positionId) == pos.order_id:
-							new_sl = None if update.position.stopLoss == 0 else update.position.stopLoss
-							pos.sl = new_sl
-							new_tp = None if update.position.takeProfit == 0 else update.position.takeProfit
-							pos.tp = new_tp
-
-							result.update({
-								ref_id: {
-									'timestamp': update.order.utcLastUpdateTimestamp/1000,
-									'type': tl.MODIFY,
-									'accepted': True,
-									'item': pos
-								}
-							})
-
-							break
-
-			# ORDER_REPLACED
-			elif execution_type == 4:
-				# Check if `STOP` or `LIMIT`
-				if update.order.orderType in (2,3):
-					# Update current order
-					new_order = self.convert_sw_order(account_id, update.order)
-					for order in self.orders:
-						if str(update.order.orderId) == order.order_id:
-							order.update(new_order)
-
-							result.update({
-								ref_id: {
-									'timestamp': update.order.utcLastUpdateTimestamp/1000,
-									'type': tl.MODIFY,
-									'accepted': True,
-									'item': order
-								}
-							})
-
-				# Check if `STOP_LOSS_TAKE_PROFIT`
-				elif update.order.orderType == 4:
-					# Update current position
-					for pos in self.positions:
-						if str(update.position.positionId) == pos.order_id:
-							new_sl = None if update.position.stopLoss == 0 else update.position.stopLoss
-							pos.sl = new_sl
-							new_tp = None if update.position.takeProfit == 0 else update.position.takeProfit
-							pos.tp = new_tp
-
-							result.update({
-								ref_id: {
-									'timestamp': update.order.utcLastUpdateTimestamp/1000,
-									'type': tl.MODIFY,
-									'accepted': True,
-									'item': pos
-								}
-							})
-
-			if len(result):
-				self.handleOnTrade(account_id, result)
-				return result
-			else:
-				return None
-
-
 	def _subscribe_chart_updates(self, msg_id, instrument):
 		subscription = ChartSubscription(self, msg_id)
 
@@ -1403,6 +1195,488 @@ class Spotware(object):
 	def onChartUpdate(self, chart, payload):
 		# self._price_queue.append((chart, payload))
 		return
+
+	def getBrokerKey(self):
+		return self.strategyId + '.' + self.brokerId
+
+	def getDbPositions(self):
+		positions = self.container.redis_client.hget(self.getBrokerKey(), "positions")
+		if positions is None:
+			positions = []
+		else:
+			positions = json.loads(positions)
+		return positions
+
+	def setDbPositions(self, positions):
+		self.container.redis_client.hset(self.getBrokerKey(), "positions", json.dumps(positions))
+
+	def appendDbPosition(self, new_position):
+		positions = self.getDbPositions()
+		positions.append(new_position)
+		self.setDbPositions(positions)
+
+	def deleteDbPosition(self, order_id):
+		positions = self.getDbPositions()
+		for i in range(len(positions)):
+			if positions[i]["order_id"] == order_id:
+				del positions[i]
+				break
+		self.setDbPositions(positions)
+
+	def replaceDbPosition(self, position):
+		positions = self.getDbPositions()
+		for i in range(len(positions)):
+			if positions[i]["order_id"] == position["order_id"]:
+				positions[i] = position
+				break
+		self.setDbPositions(positions)
+	
+	def getDbOrders(self):
+		orders = self.container.redis_client.hget(self.getBrokerKey(), "orders")
+		if orders is None:
+			orders = []
+		else:
+			orders = json.loads(orders)
+		return orders
+
+	def setDbOrders(self, orders):
+		self.container.redis_client.hset(self.getBrokerKey(), "orders", json.dumps(orders))
+
+	def appendDbOrder(self, new_order):
+		orders = self.getDbOrders()
+		orders.append(new_order)
+		self.setDbOrders(orders)
+
+	def deleteDbOrder(self, order_id):
+		orders = self.getDbOrders()
+		for i in range(len(orders)):
+			if orders[i]["order_id"] == order_id:
+				del orders[i]
+				break
+		self.setDbOrders(orders)
+
+	def replaceDbOrder(self, order):
+		orders = self.getDbOrders()
+		for i in range(len(orders)):
+			if orders[i]["order_id"] == order["order_id"]:
+				orders[i] = order
+				break
+		self.setDbOrders(orders)
+
+
+	def accountUpdateLoop(self):
+		while True:
+			if len(self._account_update_queue):
+				try:
+					payload_type, account_id, update, ref_id = self._account_update_queue[0]
+					self._handle_account_update(payload_type, account_id, update, ref_id)
+				except Exception:
+					print(traceback.format_exc())
+				finally:
+					del self._account_update_queue[0]
+
+
+	def _handle_account_update(self, payload_type, account_id, update, msg_id):
+
+		if update.get('type') == 'connected':
+			print(f'[_on_account_update] RECONNECTED')
+			if self.userAccount and self.brokerId:
+				print(f'[_on_account_update] Retrieving positions/orders')
+				# self._handle_live_strategy_setup()
+
+		elif payload_type is not None:
+			if int(payload_type) == 2125:
+				update_positions = []
+				update_orders = []
+				for pos in update.get("position", []):
+					new_pos = self.convert_sw_position(account_id, pos)
+					update_positions.append(new_pos)
+				for order in update.get("order", []):
+					new_order = self.convert_sw_order(account_id, order)
+					update_orders.append(new_order)
+				positions = [i for i in self.getDbPositions() if str(i["account_id"]) != str(account_id)]
+				positions += update_positions
+				orders = [i for i in self.getDbOrders() if str(i["account_id"]) != str(account_id)]
+				orders += update_orders
+
+				self.setDbPositions(positions)
+				self.setDbOrders(orders)
+
+			elif int(payload_type) == 2126:
+				print(f'_on_account_update: {payload_type} {account_id} {update}', flush=True)
+				# if not ref_id:
+				ref_id = self.generateReference()
+
+				print(f'Account Update: {update}')
+				execution_type = update['executionType']
+
+				result = {}
+				position_event = None
+				# ORDER_FILLED
+				# if execution_type in ('ORDER_FILLED', 'ORDER_PARTIAL_FILL'):
+				if execution_type == 'ORDER_FILLED':
+					# Check `closingOrder`
+					if update['order']['closingOrder']:
+						# Delete
+						positions = self.getDbPositions()
+						for i in range(len(positions)):
+							pos = positions[i]
+							if str(update['position']['positionId']) == pos["order_id"]:
+								if update['order']['orderType'] == 'STOP_LOSS_TAKE_PROFIT':
+									pos["close_price"] = float(update['order']['executionPrice'])
+									pos["close_time"] = float(update['order']['utcLastUpdateTimestamp']) / 1000
+
+									self.deleteDbPosition(pos["order_id"])
+
+									if update['order'].get('limitPrice'):
+										tp_dist = abs(float(update['order']['executionPrice']) - float(update['order']['limitPrice']))
+									else:
+										tp_dist = None
+
+									if update['order'].get('stopPrice'):
+										sl_dist = abs(float(update['order']['executionPrice']) - float(update['order']['stopPrice']))
+									else:
+										sl_dist = None
+
+									if sl_dist is None:
+										order_type = tl.TAKE_PROFIT
+									elif tp_dist is None:
+										order_type = tl.STOP_LOSS
+									elif tp_dist < sl_dist:
+										order_type = tl.TAKE_PROFIT
+									else:
+										order_type = tl.STOP_LOSS
+
+									result.update({
+										ref_id: {
+											'timestamp': pos["close_time"],
+											'type': order_type,
+											'accepted': True,
+											'item': pos
+										}
+									})
+								else:
+									# Fully Closed
+									if float(update['position']['tradeData']['volume']) == 0:
+										pos["close_price"] = float(update['order']['executionPrice'])
+										pos["close_time"] = float(update['order']['utcLastUpdateTimestamp']) / 1000
+
+										self.deleteDbPosition(pos["order_id"])
+
+										result.update({
+											ref_id: {
+												'timestamp': pos["close_time"],
+												'type': tl.POSITION_CLOSE,
+												'accepted': True,
+												'item': pos
+											}
+										})
+
+										# self._handled_position_events[tl.POSITION_CLOSE][pos["order_id"]] = {
+										# 	ref_id: {
+										# 		'timestamp': pos["close_time"],
+										# 		'type': tl.POSITION_CLOSE,
+										# 		'accepted': True,
+										# 		'item': pos
+										# 	}
+										# }
+										position_event = tl.POSITION_CLOSE
+
+									# Partially Closed
+									else:
+										pos["lotsize"] -= self._convert_from_sw_lotsize(float(update['order']['executedVolume']))
+
+										self.replaceDbPosition(pos)
+
+										del_pos = tl.Position.fromDict(self, pos)
+										del_pos.lotsize = self._convert_from_sw_lotsize(float(update['order']['executedVolume']))
+										del_pos.close_price = float(update['order']['executionPrice'])
+										del_pos.close_time = float(update['order']['utcLastUpdateTimestamp']) / 1000
+
+										result.update({
+											ref_id: {
+												'timestamp': del_pos.close_time,
+												'type': tl.POSITION_CLOSE,
+												'accepted': True,
+												'item': del_pos
+											}
+										})
+
+										# self._handled_position_events[tl.POSITION_CLOSE][del_pos.order_id] = {
+										# 	ref_id: {
+										# 		'timestamp': del_pos.close_time,
+										# 		'type': tl.POSITION_CLOSE,
+										# 		'accepted': True,
+										# 		'item': del_pos
+										# 	}
+										# }
+										position_event = tl.POSITION_CLOSE
+
+								break
+					else:
+						pos_order = None
+						order_type = tl.MARKET_ENTRY
+						orders = self.getDbOrders()
+						for i in range(len(orders)):
+							order = orders[i]
+							if str(update['order']['orderId']) == order["order_id"]:
+								pos_order = order
+								order["close_time"] = float(update['order']['utcLastUpdateTimestamp']) / 1000
+								if order["order_type"] == tl.STOP_ORDER:
+									order_type = tl.STOP_ENTRY
+								elif order["order_type"] == tl.LIMIT_ORDER:
+									order_type = tl.LIMIT_ENTRY
+									
+								self.deleteDbOrder(order["order_id"])
+
+								for sub in self._account_subscriptions:
+									sub.onAccountUpdate(
+										account_id,
+										{
+											self.generateReference(): {
+												'timestamp': order["close_time"],
+												'type': tl.ORDER_CANCEL,
+												'accepted': True,
+												'item': order
+											}
+										}, None, None
+									)
+								break
+
+						# Create
+						new_pos = self.convert_sw_position(account_id, update['position'])
+						new_pos.setOrder(pos_order)
+						if pos_order is not None:
+							new_pos.handled_check = False
+						else:
+							new_pos.handled_check = True
+
+						print(f"[_handle_account_update] APPENDING...")
+						self.appendDbPosition(new_pos)
+
+						result.update({
+							ref_id: {
+								'timestamp': new_pos.open_time,
+								'type': order_type,
+								'accepted': True,
+								'item': new_pos
+							}
+						})
+
+						if order_type == tl.MARKET_ENTRY:
+							# self._handled_position_events[tl.MARKET_ENTRY][new_pos.order_id] = {
+							# 	ref_id: {
+							# 		'timestamp': new_pos.open_time,
+							# 		'type': order_type,
+							# 		'accepted': True,
+							# 		'item': new_pos
+							# 	}
+							# }
+							position_event = tl.MARKET_ENTRY
+
+
+				# ORDER_ACCEPTED
+				elif execution_type == 'ORDER_ACCEPTED':
+					# Check if `STOP` or `LIMIT`
+					if update['order']['orderType'] in ('LIMIT','STOP'):
+						new_order = self.convert_sw_order(account_id, update['order'])
+
+						self.appendDbOrder(new_order)
+
+						result.update({
+							ref_id: {
+								'timestamp': float(update['order']['utcLastUpdateTimestamp'])/1000,
+								'type': new_order.order_type,
+								'accepted': True,
+								'item': new_order
+							}
+						})
+
+					# Check if `STOP_LOSS_TAKE_PROFIT`
+					elif update['order']['orderType'] == 'STOP_LOSS_TAKE_PROFIT':
+						positions = self.getDbPositions()
+						for i in range(len(positions)):
+							pos = positions[i]
+							if str(update['position']['positionId']) == pos["order_id"]:
+								new_sl = None if update['position'].get('stopLoss') is None else round(float(update['position']['stopLoss']), 5)
+								new_tp = None if update['position'].get('takeProfit') is None else round(float(update['position']['takeProfit']), 5)
+
+								if not pos["handled_check"] and pos["order"] is not None:
+									pos["handled_check"] = True
+
+									if pos["order"]["sl"] != new_sl or pos["order"]["tp"] != new_tp:
+										Thread(target=self.position_manager.close, args=(pos,), kwargs={'override': True}).start()
+										print(f'ORDER NOT FULFILLED CORRECTLY, CLOSING POSITION: {pos["order_id"]}')
+										return
+
+								pos["sl"] = new_sl
+								pos["tp"] = new_tp
+
+								self.replaceDbPosition(pos)
+
+								result.update({
+									ref_id: {
+										'timestamp': float(update['order']['utcLastUpdateTimestamp'])/1000,
+										'type': tl.MODIFY,
+										'accepted': True,
+										'item': pos
+									}
+								})
+
+								break
+
+				# ORDER_CANCELLED
+				elif execution_type == 'ORDER_CANCELLED':
+					# Check if `STOP` or `LIMIT`
+					if update['order']['orderType'] in ('LIMIT','STOP'):
+						# Update current order
+						new_order = self.convert_sw_order(account_id, update['order'])
+						orders = self.getDbOrders()
+						for i in range(len(orders)):
+							order = orders[i]
+							if str(update['order']['orderId']) == order["order_id"]:
+								order["close_time"] = float(update['order']['utcLastUpdateTimestamp']) / 1000
+
+								self.deleteDbOrder(order["order_id"])
+
+								result.update({
+									ref_id: {
+										'timestamp': order["close_time"],
+										'type': tl.ORDER_CANCEL,
+										'accepted': True,
+										'item': order
+									}
+								})
+
+								break
+
+					# Check if `STOP_LOSS_TAKE_PROFIT`
+					elif update['order']['orderType'] == 'STOP_LOSS_TAKE_PROFIT':
+						positions = self.getDbPositions()
+						for pos in positions:
+							if str(update['position']['positionId']) == pos["order_id"]:
+								new_sl = None if update['position'].get('stopLoss') is None else float(update['position']['stopLoss'])
+								pos["sl"] = new_sl
+								new_tp = None if update['position'].get('takeProfit') is None else float(update['position']['takeProfit'])
+								pos["tp"] = new_tp
+
+								self.replaceDbPosition(pos)
+
+								result.update({
+									ref_id: {
+										'timestamp': float(update['order']['utcLastUpdateTimestamp'])/1000,
+										'type': tl.MODIFY,
+										'accepted': True,
+										'item': pos
+									}
+								})
+
+								break
+
+				# ORDER_REPLACED
+				elif execution_type == 'ORDER_REPLACED':
+					# Check if `STOP` or `LIMIT`
+					if update['order']['orderType'] in ('LIMIT','STOP'):
+						# Update current order
+						new_order = self.convert_sw_order(account_id, update['order'])
+						orders = self.getDbOrders()
+						for order in orders:
+							if str(update['order']['orderId']) == order["order_id"]:
+
+								self.deleteDbOrder(order["order_id"])
+								self.appendDbOrder(new_order)
+
+								result.update({
+									ref_id: {
+										'timestamp': float(update['order']['utcLastUpdateTimestamp'])/1000,
+										'type': tl.MODIFY,
+										'accepted': True,
+										'item': new_order
+									}
+								})
+
+					# Check if `STOP_LOSS_TAKE_PROFIT`
+					elif update['order']['orderType'] == 'STOP_LOSS_TAKE_PROFIT':
+						# Update current position
+						positions = self.getDbPositions()
+						for pos in positions:
+							if str(update['position']['positionId']) == pos["order_id"]:
+								new_sl = None if update['position'].get('stopLoss') is None else float(update['position']['stopLoss'])
+								pos["sl"] = new_sl
+								new_tp = None if update['position'].get('takeProfit') is None else float(update['position']['takeProfit'])
+								pos["tp"] = new_tp
+
+								self.replaceDbPosition(pos)
+
+								result.update({
+									ref_id: {
+										'timestamp': float(update['order']['utcLastUpdateTimestamp'])/1000,
+										'type': tl.MODIFY,
+										'accepted': True,
+										'item': pos
+									}
+								})
+
+				# ORDER_REJECTED
+				elif execution_type == 'ORDER_REJECTED':
+					error_code = update.get('errorCode')
+					print(f'ORDER REJECTED: {error_code}')
+
+
+					position_id = str(update['position']['positionId'])
+					positions = self.getDbPositions()
+					for i in range(len(positions)):
+						pos = positions[i]
+						if pos["order_id"] == position_id:
+							self.deleteDbPosition(pos["order_id"])
+
+							pos["close_time"] = time.time()
+							result.update({
+								ref_id: {
+									'timestamp': time.time(),
+									'type': tl.POSITION_CLOSE,
+									'accepted': True,
+									'item': pos
+								}
+							})
+
+							print(f'REJECTING POSITION: {position_id}')
+
+							break
+
+					order_id = str(update['order']['orderId'])
+					orders = self.getDbOrders()
+					for i in range(len(orders)):
+						order = orders[i]
+						if order["order_id"] == order_id:
+							self.deleteDbOrder(order["order_id"])
+
+							order["close_time"] = time.time()
+							result.update({
+								ref_id: {
+									'timestamp': time.time(),
+									'type': tl.ORDER_CANCEL,
+									'accepted': True,
+									'item': order
+								}
+							})
+
+							print(f'REJECTING ORDER: {order_id}')
+
+							break
+
+
+				if len(result):
+					print(f'SEND IT: {result}', flush=True)
+					# self._handled[msg_id] = result
+					for sub in self._account_subscriptions:
+						sub.onAccountUpdate(account_id, result, position_event, msg_id)
+					
+					# self.handleOnTrade(account_id, result)
+				# 	return result
+				# else:
+				# 	return None
+
 
 
 	def _convert_to_sw_lotsize(self, lotsize):

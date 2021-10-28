@@ -28,6 +28,9 @@ class Position(dict):
 		self.tp = tp
 		self.tp_id = tp_id
 
+		self.order = None
+		self.handled_check = False
+
 		if open_time:
 			self.open_time = int(open_time)
 		else:
@@ -135,6 +138,8 @@ class Position(dict):
 		# Call to broker
 		return self._broker.modifyPosition(self, sl, tp, override=override)
 
+	def setOrder(self, order):
+		self.order = order
 
 	def getProfit(self):
 		ask = self._broker.getAsk(self.product)
