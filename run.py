@@ -265,7 +265,7 @@ def onSwMainLoop():
 
 # @sio.on('broker_cmd', namespace='/broker')
 def onCommand(data):
-	print(f'COMMAND: {data}', flush=True)
+	print(f'COMMAND: {data}, {time.time()}', flush=True)
 
 	try:
 		cmd = data.get('cmd')
