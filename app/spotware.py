@@ -28,13 +28,26 @@ class ChartSubscription(object):
 		# args = [payload.ask, payload.bid]
 		args = [MessageToDict(payload)]
 
-		self.broker._send_response(
-			self.msg_id,
-			{
-				'args': args,
-				'kwargs': {}
+		# self.broker._send_response(
+		# 	self.msg_id,
+		# 	{
+		# 		'args': args,
+		# 		'kwargs': {}
+		# 	}
+		# )
+
+		self.broker.container.zmq_req_socket.send_json({
+			"type": "price",
+			"message": {
+				'msg_id': self.msg_id,
+				'result': {
+					'args': args,
+					'kwargs': {}
+				}
 			}
-		)
+		})
+
+		# self.broker.container.zmq_req_socket.recv()
 
 
 class AccountSubscription(object):
@@ -48,13 +61,26 @@ class AccountSubscription(object):
 		args = list(args)
 
 		print(f'ACCOUNT UPDATE: {args}, {kwargs}')
-		self.broker._send_response(
-			self.msg_id,
-			{
-				'args': args,
-				'kwargs': kwargs
+		# self.broker._send_response(
+		# 	self.msg_id,
+		# 	{
+		# 		'args': args,
+		# 		'kwargs': kwargs
+		# 	}
+		# )
+
+		self.broker.container.zmq_req_socket.send_json({
+			"type": "account",
+			"message": {
+				'msg_id': self.msg_id,
+				'result': {
+					'args': args,
+					'kwargs': kwargs
+				}
 			}
-		)
+		})
+
+		# self.broker.zmq_req_socket.recv()
 
 
 
@@ -251,17 +277,17 @@ class Spotware(object):
 			return self.parent.live_client
 
 
-	def _send_response(self, msg_id, res):
-		res = {
-			'msg_id': msg_id,
-			'result': res
-		}
+	# def _send_response(self, msg_id, res):
+	# 	res = {
+	# 		'msg_id': msg_id,
+	# 		'result': res
+	# 	}
 
-		self.container.sio.emit(
-			'broker_res', 
-			res, 
-			namespace='/broker'
-		)
+	# 	self.container.sio.emit(
+	# 		'broker_res', 
+	# 		res, 
+	# 		namespace='/broker'
+	# 	)
 
 
 
