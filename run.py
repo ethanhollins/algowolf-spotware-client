@@ -390,5 +390,6 @@ if __name__ == '__main__':
 	# sio = createApp()
 	# print('DONE', flush=True)
 
+	onAddUser("PARENT", "PARENT", "PARENT", None, None, None, is_parent=True, is_dummy=False)
 	Thread(target=run).start()
 	onSwMainLoop()
