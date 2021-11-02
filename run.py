@@ -25,22 +25,9 @@ class UserContainer(object):
 		self.parent = None
 		self.users = {}
 		self.add_user_queue = []
+		self.send_queue = []
 		self.redis_client = Redis(host='redis', port=6379, password="dev")
-		self._setup_zmq_connections()
-
-
-	def _setup_zmq_connections(self):
 		self.zmq_context = zmq.Context()
-
-		self.zmq_req_socket = self.zmq_context.socket(zmq.DEALER)
-		self.zmq_req_socket.connect("tcp://zmq_broker:5557")
-
-		self.zmq_pull_socket = self.zmq_context.socket(zmq.PULL)
-		self.zmq_pull_socket.connect("tcp://zmq_broker:5561")
-
-		self.zmq_poller = zmq.Poller()
-		self.zmq_poller.register(self.zmq_pull_socket, zmq.POLLIN)
-		self.zmq_poller.register(self.zmq_req_socket, zmq.POLLIN)
 
 
 	def getSio(self):
@@ -125,7 +112,7 @@ def sendResponse(msg_id, res):
 		}
 	}
 
-	user_container.zmq_req_socket.send_json(res)
+	user_container.send_queue.append(res)
 	
 
 # def sendResponse(msg_id, res):
@@ -146,14 +133,30 @@ def onAddUser(user_id, strategy_id, broker_id, access_token, refresh_token, acco
 	try:
 		print('[onAddUser] 1', flush=True)
 		if broker_id == "PARENT" or broker_id not in user_container.users:
-			user = user_container.addUser(
-				user_id, strategy_id, broker_id, access_token, refresh_token, accounts, is_parent=is_parent, is_dummy=is_dummy
-			)
-			print('[onAddUser] 2', flush=True)
+			if broker_id in user_container.users:
+				user = user_container.getUser(broker_id)
+				user.setVars(
+					user_id, strategy_id, broker_id, 
+					access_token=user.access_token, refresh_token=user.refresh_token,
+					accounts=accounts, is_parent=is_parent, is_dummy=is_dummy
+				)
 
-			if access_token is not None:
-				print('[onAddUser] 3', flush=True)
-				user.start()
+				if user.access_token is None and access_token is not None:
+					user.access_token = access_token
+					user.refresh_token = refresh_token
+					print('[onAddUser] 3', flush=True)
+					user.start()
+
+			else:
+				user = user_container.addUser(
+					user_id, strategy_id, broker_id, access_token, refresh_token, accounts, is_parent=is_parent, is_dummy=is_dummy
+				)
+				
+				if access_token is not None:
+					print('[onAddUser] 3', flush=True)
+					user.start()
+
+			print('[onAddUser] 2', flush=True)
 				
 		else:
 			user = user_container.getUser(broker_id)
@@ -372,7 +375,31 @@ def onCommand(data):
 
 # 	return sio
 
+def send_loop():
+	user_container.zmq_req_socket = user_container.zmq_context.socket(zmq.DEALER)
+	user_container.zmq_req_socket.connect("tcp://zmq_broker:5557")
+
+	while True:
+		try:
+			if len(user_container.send_queue):
+				item = user_container.send_queue[0]
+				del user_container.send_queue[0]
+
+				user_container.zmq_req_socket.send_json(item, zmq.NOBLOCK)
+
+		except Exception:
+			print(traceback.format_exc())
+
+		time.sleep(0.001)
+
+
 def run():
+	user_container.zmq_pull_socket = user_container.zmq_context.socket(zmq.PULL)
+	user_container.zmq_pull_socket.connect("tcp://zmq_broker:5561")
+
+	user_container.zmq_poller = zmq.Poller()
+	user_container.zmq_poller.register(user_container.zmq_pull_socket, zmq.POLLIN)
+	
 	while True:
 		socks = dict(user_container.zmq_poller.poll())
 
@@ -387,9 +414,11 @@ def run():
 
 
 if __name__ == '__main__':
+	print('START SPOTWARE')
 	# sio = createApp()
 	# print('DONE', flush=True)
 
 	onAddUser("PARENT", "PARENT", "PARENT", None, None, None, is_parent=True, is_dummy=False)
+	Thread(target=send_loop).start()
 	Thread(target=run).start()
 	onSwMainLoop()

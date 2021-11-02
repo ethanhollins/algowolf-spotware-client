@@ -36,7 +36,7 @@ class ChartSubscription(object):
 		# 	}
 		# )
 
-		self.broker.container.zmq_req_socket.send_json({
+		self.broker.container.send_queue.append({
 			"type": "price",
 			"message": {
 				'msg_id': self.msg_id,
@@ -69,7 +69,7 @@ class AccountSubscription(object):
 		# 	}
 		# )
 
-		self.broker.container.zmq_req_socket.send_json({
+		self.broker.container.send_queue.append({
 			"type": "account",
 			"message": {
 				'msg_id': self.msg_id,
@@ -160,9 +160,10 @@ class Spotware(object):
 			self.parent.addChild(self)
 
 
-	def setVars(self, user_id, broker_id, access_token=None, refresh_token=None, 
+	def setVars(self, user_id, strategy_id, broker_id, access_token=None, refresh_token=None, 
 		accounts={}, is_parent=False, is_dummy=False):
 		self.userId = user_id
+		self.strategyId = strategy_id
 		self.brokerId = broker_id
 		self.accounts = accounts
 		self.is_parent = is_parent
@@ -1213,9 +1214,22 @@ class Spotware(object):
 			self.client.send(sub_req)
 
 
+	def _get_account_subscription_msg_id(self):
+		for sub in self._account_subscriptions:
+			return sub.msg_id
+		return None
+
+
 	def _subscribe_account_updates(self, msg_id):
-		subscription = AccountSubscription(self, msg_id)
-		self._account_subscriptions.append(subscription)
+		existing_msg_id = self._get_account_subscription_msg_id()
+
+		if existing_msg_id is None:
+			subscription = AccountSubscription(self, msg_id)
+			self._account_subscriptions.append(subscription)
+		else:
+			msg_id = existing_msg_id
+		
+		return msg_id
 
 
 	def onChartUpdate(self, chart, payload):
