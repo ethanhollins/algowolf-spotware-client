@@ -241,13 +241,13 @@ class Spotware(object):
 
 	def _wait(self, ref_id, polling=0.1, timeout=30):
 		start = time.time()
-		while not ref_id in self.getHandled():
+		while not ref_id in self._handled:
 			if time.time() - start >= timeout:
 				return None
 			time.sleep(polling)
 
-		item = self.getHandled()[ref_id]
-		self.deleteHandledItem(ref_id)
+		item = self._handled[ref_id]
+		del self._handled[ref_id]
 		return item
 
 
