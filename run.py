@@ -339,6 +339,9 @@ def onCommand(data):
 			elif cmd == 'disconnectBroker':
 				res = getParent().disconnectBroker()
 
+			elif cmd == 'authCheck':
+				res = user.authCheck(*data.get('args'), **data.get('kwargs'))
+
 			elif cmd == 'heartbeat':
 				res = getParent().heartbeat()
 

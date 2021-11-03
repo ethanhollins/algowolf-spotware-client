@@ -535,6 +535,9 @@ class Spotware(object):
 					'symbolCategoryId': i.symbolCategoryId
 				}
 
+	def authCheck(self):
+		return {'result': self.is_auth}
+
 
 	'''
 	Broker functions
