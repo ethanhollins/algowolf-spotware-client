@@ -99,6 +99,7 @@ class Spotware(object):
 		self.is_dummy = is_dummy
 
 		self._spotware_connected = False
+		self._first_auth = False
 		self._last_update = time.time()
 		self.is_running = True
 		self._subscriptions = {}
@@ -278,6 +279,13 @@ class Spotware(object):
 			return self.parent.live_client
 
 
+	def _is_demo(self, account_id):
+		if self.accounts[str(account_id)]['is_demo']:
+			return True
+		else:
+			return False
+
+
 	# def _send_response(self, msg_id, res):
 	# 	res = {
 	# 		'msg_id': msg_id,
@@ -329,25 +337,30 @@ class Spotware(object):
 
 			print(f'RE AUTH ACCOUNTS: {is_demo} {self.parent.children}', flush=True)
 
+			# Wait for both clients to be connected before reconnecting
+			start_time = time.time()
 			if is_demo:
-				# Wait for both clients to be connected before reconnecting
-				start_time = time.time()
-				while not self.parent.demo_client.is_connected or not self.parent.live_client.is_connected:
+				while not self.parent.demo_client.is_connected:
+					if time.time() - start_time > 30:
+						return
+					time.sleep(1)
+			else:
+				while not self.parent.live_client.is_connected:
 					if time.time() - start_time > 30:
 						return
 					time.sleep(1)
 
-				if self.parent.accounts is not None:
-					self.parent.is_auth = self.parent._authorize_accounts(self.parent.accounts, is_parent=True)
-					
-				for child in self.parent.children:
-					print(child.accounts, flush=True)
-					child._authorize_accounts(child.accounts)
-					# for sub in child._account_subscriptions:
-						# sub.onAccountUpdate(None, None, {'type': 'connected'}, None)
-					child._account_update_queue.append((None, None, {'type': 'connected'}, None))
+			if self.parent.accounts is not None:
+				self.parent.is_auth = self.parent._authorize_accounts(self.parent.accounts, is_parent=True, check_is_demo=is_demo)
+				
+			for child in self.parent.children:
+				print(child.accounts, flush=True)
+				child._authorize_accounts(child.accounts, check_is_demo=is_demo)
+				# for sub in child._account_subscriptions:
+					# sub.onAccountUpdate(None, None, {'type': 'connected'}, None)
+				child._account_update_queue.append((None, None, {'type': 'connected'}, None))
 
-				self.parent._resubscribe_chart_updates()
+			self.parent._resubscribe_chart_updates()
 
 		# Tick
 		elif payloadType == 2131:
@@ -449,7 +462,7 @@ class Spotware(object):
 			return False
 
 
-	def _authorize_accounts(self, accounts, is_parent=False, is_dummy=False):
+	def _authorize_accounts(self, accounts, is_parent=False, is_dummy=False, check_is_demo=None):
 		print(f'MSG: {self.brokerId}, {accounts}', flush=True)
 
 		if not is_dummy and self.refresh_token is not None:
@@ -459,6 +472,12 @@ class Spotware(object):
 
 		is_auth = True
 		for account_id in accounts:
+			if check_is_demo is not None:
+				if (self._is_demo(account_id) and not check_is_demo or
+					not self._is_demo(account_id) and check_is_demo):
+					continue
+
+
 			ref_id = self.generateReference()
 			acc_auth = o2.ProtoOAAccountAuthReq(
 				ctidTraderAccountId=int(account_id), 
